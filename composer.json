@@ -1,0 +1,25 @@
+{
+  "name": "monkeyscloud/monkeyslegion-cli",
+  "description": "Command-line interface and developer tooling for the MonkeysLegion framework.",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": "^8.4",
+    "monkeyscloud/monkeyslegion-core":  "^1.0",
+    "monkeyscloud/monkeyslegion-di":   "^1.0",
+    "monkeyscloud/monkeyslegion-entity": "^1.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "MonkeysLegion\\Cli\\": "src/"
+    }
+  },
+  "bin": [
+    "bin/ml"
+  ],
+  "extra": {
+    "branch-alias": {
+      "dev-main": "1.0-dev"
+    }
+  }
+}

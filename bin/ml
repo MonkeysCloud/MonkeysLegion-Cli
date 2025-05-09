@@ -1,0 +1,31 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+/**
+ * MonkeysLegion CLI entry point.
+ *
+ * Installed globally in every project as `vendor/bin/ml`
+ * and re-exported by the skeleton under `bin/ml`.
+ */
+
+require_once __DIR__ . '/../vendor/autoload.php';
+
+define('ML_BASE_PATH', dirname(__DIR__, 2));   // project root (<project>/)
+
+$container = new MonkeysLegion\DI\ContainerBuilder()
+    ->addDefinitions(ML_BASE_PATH . '/config/app.php')
+    ->build();
+
+/*
+|--------------------------------------------------------------------------
+| Bootstrap the CLI kernel
+|--------------------------------------------------------------------------
+|
+| Resolve the CliKernel, register commands, and delegate control
+| to the command specified in argv[1] (or list commands if none).
+|
+*/
+
+$kernel = $container->get(MonkeysLegion\Cli\CliKernel::class);
+exit($kernel->run($argv));
