@@ -3,11 +3,13 @@
   "description": "Command-line interface and developer tooling for the MonkeysLegion framework.",
   "type": "library",
   "license": "MIT",
+  "minimum-stability": "dev",
+  "prefer-stable": true,
   "require": {
     "php": "^8.4",
-    "monkeyscloud/monkeyslegion-core":  "^1.0",
-    "monkeyscloud/monkeyslegion-di":   "^1.0",
-    "monkeyscloud/monkeyslegion-entity": "^1.0"
+    "monkeyscloud/monkeyslegion-core": "^1.0@dev",
+    "monkeyscloud/monkeyslegion-di": "dev-main",
+    "monkeyscloud/monkeyslegion-entity": "^1.0@dev"
   },
   "autoload": {
     "psr-4": {
