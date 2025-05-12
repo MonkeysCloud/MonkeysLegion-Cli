@@ -5,21 +5,22 @@ declare(strict_types=1);
 /**
  * MonkeysLegion CLI entry point.
  *
- * Installed in every project as `vendor/bin/ml`
- * and re-exported by the skeleton under `bin/ml`.
+ * Installed per‐project as `vendor/bin/ml`
+ * and re‐exported under `bin/ml` in the skeleton.
  */
 
-// 1) Find Composer's autoloader (either skeleton or vendor)
+// 1) Locate Composer's autoloader in either place
 $autoloadCandidates = [
-    __DIR__ . '/../vendor/autoload.php',   // skeleton/bin/ml
-    __DIR__ . '/../../../autoload.php',    // vendor/monkeyscloud/.../bin/ml
+    __DIR__ . '/../vendor/autoload.php',   // skeleton: <project>/bin/vendor/autoload.php
+    __DIR__ . '/../../../autoload.php',    // vendor:   <project>/vendor/autoload.php
 ];
 
 $found = false;
 foreach ($autoloadCandidates as $autoload) {
     if (file_exists($autoload)) {
         require_once $autoload;
-        // project root = parent of the vendor folder
+        // Define project root: parent of the vendor folder
+        // e.g. /path/to/my-app/vendor/autoload.php → /path/to/my-app
         define('ML_BASE_PATH', dirname(dirname($autoload)));
         $found = true;
         break;
@@ -27,11 +28,11 @@ foreach ($autoloadCandidates as $autoload) {
 }
 
 if (! $found) {
-    fwrite(STDERR, "Error: Cannot locate Composer autoload.php.\n");
+    fwrite(STDERR, "Error: could not locate Composer autoload.php\n");
     exit(1);
 }
 
-// 2) Build the DI container, passing in the array from config/app.php
+// 2) Build the DI container, passing in the array returned by config/app.php
 $container = (new MonkeysLegion\DI\ContainerBuilder())
     ->addDefinitions(require ML_BASE_PATH . '/config/app.php')
     ->build();
@@ -41,8 +42,8 @@ $container = (new MonkeysLegion\DI\ContainerBuilder())
 | Bootstrap the CLI kernel
 |--------------------------------------------------------------------------
 |
-| Resolve the CliKernel, register commands, and delegate control
-| to the command specified in $argv[1] (or list commands if none).
+| Resolve the CliKernel, register commands, and hand off to the requested
+| command (from $argv), or list available commands if none given.
 |
 */
 
