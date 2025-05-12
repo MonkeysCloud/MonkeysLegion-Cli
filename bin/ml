@@ -9,12 +9,31 @@ declare(strict_types=1);
  * and re-exported by the skeleton under `bin/ml`.
  */
 
-require_once __DIR__ . '/../vendor/autoload.php';
+// Attempt to locate Composer's autoloader in either the project or vendor path
+$autoloadPaths = [
+    __DIR__ . '/../vendor/autoload.php',    // skeleton `bin/ml`
+    __DIR__ . '/../../../autoload.php',     // vendor `.../bin/ml`
+];
+$loaderFound = false;
+foreach ($autoloadPaths as $path) {
+    if (file_exists($path)) {
+        require_once $path;
+        $loaderFound = true;
+        // Determine project root via autoloader location
+        $vendorDir   = dirname($path);
+        $projectRoot = dirname($vendorDir);
+        define('ML_BASE_PATH', $projectRoot);
+        break;
+    }
+}
+if (! $loaderFound) {
+    fwrite(STDERR, "Cannot locate Composer autoload.php.\n");
+    exit(1);
+}
 
-define('ML_BASE_PATH', dirname(__DIR__, 2));   // project root (<project>/)
-
+// Build the DI container
 $container = new MonkeysLegion\DI\ContainerBuilder()
-    ->addDefinitions(ML_BASE_PATH . '/config/app.php')
+    ->addDefinitions(require ML_BASE_PATH . '/config/app.php')
     ->build();
 
 /*
@@ -27,5 +46,6 @@ $container = new MonkeysLegion\DI\ContainerBuilder()
 |
 */
 
+/** @var MonkeysLegion\Cli\CliKernel $kernel */
 $kernel = $container->get(MonkeysLegion\Cli\CliKernel::class);
 exit($kernel->run($argv));
