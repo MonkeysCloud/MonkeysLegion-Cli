@@ -3,52 +3,42 @@
 declare(strict_types=1);
 
 /**
- * MonkeysLegion CLI entry point.
- *
- * Installed per‐project as `vendor/bin/ml`
- * and re‐exported under `bin/ml` in the skeleton.
+ * MonkeysLegion CLI entry point (vendor/bin/ml or skeleton/bin/ml).
  */
 
-// 1) Locate Composer's autoloader in either place
-$autoloadCandidates = [
-    __DIR__ . '/../vendor/autoload.php',   // skeleton: <project>/bin/vendor/autoload.php
-    __DIR__ . '/../../../autoload.php',    // vendor:   <project>/vendor/autoload.php
-];
-
+// 1) Climb folders to find vendor/autoload.php
+$dir = __DIR__;
 $found = false;
-foreach ($autoloadCandidates as $autoload) {
-    if (file_exists($autoload)) {
-        require_once $autoload;
-        // Define project root: parent of the vendor folder
-        // e.g. /path/to/my-app/vendor/autoload.php → /path/to/my-app
-        define('ML_BASE_PATH', dirname(dirname($autoload)));
+while ($dir !== dirname($dir)) {
+    $candidate = $dir . '/vendor/autoload.php';
+    if (file_exists($candidate)) {
+        require_once $candidate;
+        define('ML_BASE_PATH', $dir);
         $found = true;
         break;
     }
+    $dir = dirname($dir);
 }
 
 if (! $found) {
-    fwrite(STDERR, "Error: could not locate Composer autoload.php\n");
+    fwrite(STDERR, "Error: could not find vendor/autoload.php above " . __DIR__ . "\n");
     exit(1);
 }
 
-// 2) Build the DI container, passing in the array returned by config/app.php
-$container = (new MonkeysLegion\DI\ContainerBuilder())
-    ->addDefinitions(
-        require ML_BASE_PATH . '/config/app.php'
-    )
+// 2) Load your DI definitions from the project config
+$configFile = ML_BASE_PATH . '/config/app.php';
+if (! file_exists($configFile)) {
+    fwrite(STDERR, "Error: missing config/app.php at {$configFile}\n");
+    exit(1);
+}
+
+// Pass the returned array into addDefinitions()
+$definitions = require $configFile;
+$container   = (new MonkeysLegion\DI\ContainerBuilder())
+    ->addDefinitions($definitions)
     ->build();
 
-/*
-|--------------------------------------------------------------------------
-| Bootstrap the CLI kernel
-|--------------------------------------------------------------------------
-|
-| Resolve the CliKernel, register commands, and hand off to the requested
-| command (from $argv), or list available commands if none given.
-|
-*/
-
+// 3) Bootstrap and run the CLI kernel
 /** @var MonkeysLegion\Cli\CliKernel $kernel */
 $kernel = $container->get(MonkeysLegion\Cli\CliKernel::class);
 exit($kernel->run($argv));
