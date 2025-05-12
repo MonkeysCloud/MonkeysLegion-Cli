@@ -3,12 +3,12 @@ declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
 
-use MonkeysLegion\Cli\Console\Attributes\Command;
-use MonkeysLegion\Cli\Console\Command as BaseCommand;
+use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
+use MonkeysLegion\Cli\Console\Command;
 use RuntimeException;
 
-#[Command('key:generate', 'Generate a new APP_KEY in your .env file')]
-final class KeyGenerateCommand extends BaseCommand
+#[CommandAttr('key:generate', 'Generate a new APP_KEY in your .env file')]
+final class KeyGenerateCommand extends Command
 {
     public function handle(): int
     {
