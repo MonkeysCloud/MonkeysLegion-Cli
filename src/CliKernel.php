@@ -72,3 +72,4 @@ final class CliKernel
         return $command();
     }
 }
+
