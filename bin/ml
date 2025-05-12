@@ -5,34 +5,34 @@ declare(strict_types=1);
 /**
  * MonkeysLegion CLI entry point.
  *
- * Installed globally in every project as `vendor/bin/ml`
+ * Installed in every project as `vendor/bin/ml`
  * and re-exported by the skeleton under `bin/ml`.
  */
 
-// Attempt to locate Composer's autoloader in either the project or vendor path
-$autoloadPaths = [
-    __DIR__ . '/../vendor/autoload.php',    // skeleton `bin/ml`
-    __DIR__ . '/../../../autoload.php',     // vendor `.../bin/ml`
+// 1) Find Composer's autoloader (either skeleton or vendor)
+$autoloadCandidates = [
+    __DIR__ . '/../vendor/autoload.php',   // skeleton/bin/ml
+    __DIR__ . '/../../../autoload.php',    // vendor/monkeyscloud/.../bin/ml
 ];
-$loaderFound = false;
-foreach ($autoloadPaths as $path) {
-    if (file_exists($path)) {
-        require_once $path;
-        $loaderFound = true;
-        // Determine project root via autoloader location
-        $vendorDir   = dirname($path);
-        $projectRoot = dirname($vendorDir);
-        define('ML_BASE_PATH', $projectRoot);
+
+$found = false;
+foreach ($autoloadCandidates as $autoload) {
+    if (file_exists($autoload)) {
+        require_once $autoload;
+        // project root = parent of the vendor folder
+        define('ML_BASE_PATH', dirname(dirname($autoload)));
+        $found = true;
         break;
     }
 }
-if (! $loaderFound) {
-    fwrite(STDERR, "Cannot locate Composer autoload.php.\n");
+
+if (! $found) {
+    fwrite(STDERR, "Error: Cannot locate Composer autoload.php.\n");
     exit(1);
 }
 
-// Build the DI container
-$container = new MonkeysLegion\DI\ContainerBuilder()
+// 2) Build the DI container, passing in the array from config/app.php
+$container = (new MonkeysLegion\DI\ContainerBuilder())
     ->addDefinitions(require ML_BASE_PATH . '/config/app.php')
     ->build();
 
@@ -42,7 +42,7 @@ $container = new MonkeysLegion\DI\ContainerBuilder()
 |--------------------------------------------------------------------------
 |
 | Resolve the CliKernel, register commands, and delegate control
-| to the command specified in argv[1] (or list commands if none).
+| to the command specified in $argv[1] (or list commands if none).
 |
 */
 
