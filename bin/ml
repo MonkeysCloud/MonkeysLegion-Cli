@@ -34,7 +34,9 @@ if (! $found) {
 
 // 2) Build the DI container, passing in the array returned by config/app.php
 $container = (new MonkeysLegion\DI\ContainerBuilder())
-    ->addDefinitions(require ML_BASE_PATH . '/config/app.php')
+    ->addDefinitions(
+        require ML_BASE_PATH . '/config/app.php'
+    )
     ->build();
 
 /*
