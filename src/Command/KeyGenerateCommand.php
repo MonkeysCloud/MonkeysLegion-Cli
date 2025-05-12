@@ -10,7 +10,12 @@ use RuntimeException;
 #[CommandAttr('key:generate', 'Generate a new APP_KEY in your .env file')]
 final class KeyGenerateCommand extends Command
 {
-    public function handle(): int
+    public function __construct()
+    {
+        parent::__construct();
+    }
+
+    protected function handle(): int
     {
         $envFile    = base_path('.env');
         $exampleEnv = base_path('.env.example');
@@ -31,18 +36,14 @@ final class KeyGenerateCommand extends Command
             throw new RuntimeException("Unable to read {$envFile}");
         }
 
-        // Generate a 32-byte random key, base64‐encoded
-        $key = rtrim(base64_encode(random_bytes(32)), '=');
+        // Generate a 32-byte random key, base64‑encoded
+        $key  = rtrim(base64_encode(random_bytes(32)), '=');
         $line = "APP_KEY={$key}";
 
         if (preg_match('/^APP_KEY=.*$/m', $contents)) {
-            $contents = preg_replace(
-                '/^APP_KEY=.*$/m',
-                $line,
-                $contents
-            );
+            $contents = preg_replace('/^APP_KEY=.*$/m', $line, $contents);
         } else {
-            $contents = trim($contents) . "\n\n" . $line . "\n";
+            $contents = trim($contents) . "\n\n{$line}\n";
         }
 
         file_put_contents($envFile, $contents);
