@@ -23,7 +23,13 @@ final class CliKernel
      */
     public function __construct(private DIContainer $container)
     {
-        // Discover all command classes tagged with #[CommandAttr]
+        // Preload all command classes so attributes are available
+        $cmdDir = __DIR__ . '/Command';
+        foreach (glob($cmdDir . '/*.php') as $file) {
+            require_once $file;
+        }
+
+        // Discover command classes tagged with #[CommandAttr]
         foreach (get_declared_classes() as $class) {
             if (! str_starts_with($class, 'MonkeysLegion\\Cli\\Command\\')) {
                 continue;
@@ -72,4 +78,3 @@ final class CliKernel
         return $command();
     }
 }
-
