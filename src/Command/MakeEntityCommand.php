@@ -94,24 +94,47 @@ final class MakeEntityCommand extends Command
         }
 
         /* --------  4) Inject new code  ----------------------------------- */
-        $lines = file($file, FILE_IGNORE_NEW_LINES);
-        $last  = array_keys($lines); $last = end($last);          // last index
-        foreach ($lines as $idx=>$ln) {
-            if ($idx === $last) {                                 // just before final '}'
-                foreach ($newFields as $prop=>$type) {
-                    $insert[] = "    #[Field(type: '{$type}')]";
-                    $insert[] = "    private {$type} \${$prop};\n";
+        $lines    = file($file, FILE_IGNORE_NEW_LINES);
+        $out      = [];
+
+        /**
+         * We insert **before** the last “}”, but must keep every original line
+         * (previous logic overwrote earlier lines by re-assigning $out).
+         */
+        $lastLineIndex = array_key_last($lines);
+
+        foreach ($lines as $idx => $line) {
+
+            // ── when we reach the closing brace, first inject new defs ──
+            if ($idx === $lastLineIndex) {
+
+                // ▸ scalar fields
+                foreach ($newFields as $prop => $type) {
+                    $out[] = "    #[Field(type: '{$type}')]";
+                    $out[] = "    private {$type} \${$prop};";
+                    $out[] = "";                               // blank line for readability
                 }
-                foreach ($newRels as $prop=>$meta) {
-                    $att = $meta['attr']; $tar = $meta['target'];
-                    $phpType = in_array($att, ['OneToMany','ManyToMany']) ? "{$tar}[]" : $tar;
-                    $insert[] = "    #[{$att}(targetEntity: {$tar}::class)]";
-                    $insert[] = "    private {$phpType} \${$prop};\n";
+
+                // ▸ relationships
+                foreach ($newRels as $prop => $meta) {
+                    $attr    = $meta['attr'];           // OneToOne, …
+                    $target  = $meta['target'];         // FQCN
+                    $phpType = in_array($attr, ['OneToMany','ManyToMany'])
+                        ? "{$target}[]"          // collection
+                        : $target;               // single object
+
+                    $out[] = "    #[{$attr}(targetEntity: {$target}::class)]";
+                    $out[] = "    private {$phpType} \${$prop};";
+                    $out[] = "";
                 }
-                $out = array_merge($insert??[],[$ln]);
-            } else $out[] = $ln;
+            }
+
+            // always write the original line (incl. the final “}”)
+            $out[] = $line;
         }
-        file_put_contents($file, implode("\n",$out));
+
+        /* --------  8) Write it back  ------------------------------------ */
+        file_put_contents($file, implode("\n", $out));
         $this->info("✅  Updated {$file}");
         return self::SUCCESS;
     }
