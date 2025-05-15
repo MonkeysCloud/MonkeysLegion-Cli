@@ -9,7 +9,7 @@ use MonkeysLegion\Cli\Console\Command;
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
 final class MakeEntityCommand extends Command
 {
-    /** @var string[] Supported field types */
+    /** @var string[] Supported scalar field types */
     private array $fieldTypes = [
         'string','char','text','mediumText','longText',
         'integer','tinyInt','smallInt','bigInt','unsignedBigInt',
@@ -20,7 +20,7 @@ final class MakeEntityCommand extends Command
         'ipAddress','macAddress',
     ];
 
-    /** @var string[] Supported relation types */
+    /** @var array<string,string> CLI keyword → attribute class */
     private array $relTypes = [
         'oneToOne'   => 'OneToOne',
         'oneToMany'  => 'OneToMany',
@@ -28,213 +28,195 @@ final class MakeEntityCommand extends Command
         'manyToMany' => 'ManyToMany',
     ];
 
+    /** @var string[] items offered for readline completion */
+    private array $completions = [];
+
+    /* --------------------------------------------------------------------- */
+    /*  Entry-point                                                          */
+    /* --------------------------------------------------------------------- */
+
     protected function handle(): int
     {
-        // 1) fetch the entity name from argv[2] if provided
-        $argv = $_SERVER['argv'] ?? [];
-        $name = $argv[2] ?? '';
-
-        if ($name === '') {
-            $name = $this->ask('Enter entity name (e.g. User)');
-        } else {
-            $this->info("Entity name: {$name}");
+        // enable TAB completion if ext-readline is present
+        if (function_exists('readline_completion_function')) {
+            readline_completion_function([$this,'readlineComplete']);
         }
 
-        if (! preg_match('/^[A-Z][A-Za-z0-9]+$/', $name)) {
-            $this->error('Invalid class name. Must start with uppercase and contain only letters/numbers.');
-            return self::FAILURE;
+        /* --------  1) Entity class name  --------------------------------- */
+        $name = $_SERVER['argv'][2] ?? '';
+        $name = $name !== '' ? $name : $this->ask('Enter entity name (e.g. User)');
+        if (!preg_match('/^[A-Z][A-Za-z0-9]+$/', $name)) {
+            return $this->fail('Invalid class name (must start with uppercase)');
         }
 
-        // 2) Prepare file path
         $dir  = base_path('app/Entity');
         $file = "{$dir}/{$name}.php";
         @mkdir($dir, 0755, true);
 
-        // 3) If it doesn’t exist, create stub
-        if (! is_file($file)) {
+        if (!is_file($file)) {
             $this->createStub($name, $file);
-            $this->info("✅  Created new Entity stub: {$file}");
+            $this->info("✅  Created new stub: {$file}");
         }
 
-        // 4) Scan existing fields & relations
+        /* --------  2) Parse current file  -------------------------------- */
         $src = file_get_contents($file);
-        preg_match_all(
-            '/\#\[Field\([^\)]*\)\].+\$([A-Za-z0-9_]+);/m',
-            $src, $fm, PREG_SET_ORDER
-        );
-        preg_match_all(
-            '/\#\[(OneToOne|OneToMany|ManyToOne|ManyToMany)[^\]]*\].+\$([A-Za-z0-9_]+);/m',
-            $src, $rm, PREG_SET_ORDER
-        );
+        preg_match_all('/#\[Field[^\]]+]\s+private [^$]+\$([A-Za-z0-9_]+)/',        $src,$m); $existingFields = $m[1] ?? [];
+        preg_match_all('/#\[(OneToOne|OneToMany|ManyToOne|ManyToMany)[^\]]+]\s+private [^$]+\$([A-Za-z0-9_]+)/',$src,$m); $existingRels = $m[2] ?? [];
 
-        $existingFields = array_map(fn($m) => $m[1], $fm);
-        $existingRels   = array_map(fn($m) => $m[2], $rm);
-
-        // 5) Interactive menu to add fields or relations
         $newFields = [];
         $newRels   = [];
 
-        $this->info("\nDefine fields and relationships:");
-        $this->line("[1] Add a field");
-        $this->line("[2] Add a relationship");
-        $this->line("[3] Finish");
+        /* --------  3) Interactive menu  ---------------------------------- */
+        menu:
+        $this->info("\n===== Make Entity: {$name} =====");
+        $this->line("[1] Add field");
+        $this->line("[2] Add relationship");
+        $this->line("[3] Finish & save\n");
 
-        while (true) {
-            $opt = $this->ask('Choose an option [1‑3]');
-            switch ($opt) {
-                case '1':
-                    // Add Field
-                    $prop = $this->ask(' Field name (blank to cancel)');
-                    if ($prop === '') {
-                        $this->info('Cancelled adding field.');
-                        break;
-                    }
-                    if (in_array($prop, $existingFields, true) || isset($newFields[$prop])) {
-                        $this->error(" \${$prop} already defined");
-                        break;
-                    }
-                    if (! preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
-                        $this->error(" Invalid name");
-                        break;
-                    }
-                    $type = $this->chooseOption('field', $this->fieldTypes);
-                    $newFields[$prop] = $type;
-                    $this->info("  ➕  Added field \${$prop}:{$type}");
-                    break;
+        switch ($this->ask('Choose option 1-3')) {
+            case '1':
+                $this->addField($existingFields,$newFields);
+                goto menu;
 
-                case '2':
-                    // Add Relation
-                    $prop = $this->ask(' Relation property name (blank to cancel)');
-                    if ($prop === '') {
-                        $this->info('Cancelled adding relation.');
-                        break;
-                    }
-                    if (in_array($prop, $existingRels, true) || isset($newRels[$prop])) {
-                        $this->error(" \${$prop} already defined");
-                        break;
-                    }
-                    if (! preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
-                        $this->error(" Invalid name");
-                        break;
-                    }
-                    $rtypeKey = $this->chooseOption('relation', array_keys($this->relTypes));
-                    $class    = $this->relTypes[$rtypeKey];
-                    $target   = $this->ask(' Target Entity FQCN (e.g. App\\Entity\\Post)');
-                    if (! preg_match('/^[A-Z][A-Za-z0-9_\\\\]+$/', $target)) {
-                        $this->error(" Invalid class name");
-                        break;
-                    }
-                    $newRels[$prop] = ['type' => $class, 'target' => $target];
-                    $this->info("  ➕  Added relation \${$prop}:{$class} ➔ {$target}");
-                    break;
+            case '2':
+                $this->addRelation($existingRels,$newRels);
+                goto menu;
 
-                case '3':
-                    // Finish
-                    $this->info("Finished defining.");
-                    break 2;
+            case '3':
+                break;
 
-                default:
-                    $this->error("Invalid option; enter 1, 2, or 3.");
-            }
+            default:
+                $this->error('Enter 1, 2 or 3'); goto menu;
         }
 
-        // 6) If nothing new, exit
-        if (empty($newFields) && empty($newRels)) {
-            $this->info("No changes; exiting.");
-            return self::SUCCESS;
+        if (!$newFields && !$newRels) {
+            $this->info('No changes – exiting.'); return self::SUCCESS;
         }
 
-        // 7) Inject into the class before the final “}”
-        $lines    = file($file, FILE_IGNORE_NEW_LINES);
-        $out      = [];
-        $lastLine = null;
-
-        // find the index of the last '}' line
-        foreach ($lines as $i => $line) {
-            if (trim($line) === '}') {
-                $lastLine = $i;
-            }
-        }
-
-        foreach ($lines as $i => $line) {
-            if ($i === $lastLine) {
-                // append new field definitions
-                foreach ($newFields as $p => $t) {
-                    $out[] = "    #[Field(type: '{$t}')]";
-                    $out[] = "    private {$t} \${$p};";
-                    $out[] = "";
+        /* --------  4) Inject new code  ----------------------------------- */
+        $lines = file($file, FILE_IGNORE_NEW_LINES);
+        $last  = array_keys($lines); $last = end($last);          // last index
+        foreach ($lines as $idx=>$ln) {
+            if ($idx === $last) {                                 // just before final '}'
+                foreach ($newFields as $prop=>$type) {
+                    $insert[] = "    #[Field(type: '{$type}')]";
+                    $insert[] = "    private {$type} \${$prop};\n";
                 }
-                // append new relation definitions
-                foreach ($newRels as $p => $info) {
-                    $cls     = $info['type'];
-                    $tar     = $info['target'];
-                    $phpType = in_array($cls, ['OneToMany','ManyToMany'])
-                        ? "{$tar}[]"
-                        : "{$tar}";
-                    $out[] = "    #[{$cls}(targetEntity: {$tar}::class)]";
-                    $out[] = "    private {$phpType} \${$p};";
-                    $out[] = "";
+                foreach ($newRels as $prop=>$meta) {
+                    $att = $meta['attr']; $tar = $meta['target'];
+                    $phpType = in_array($att, ['OneToMany','ManyToMany']) ? "{$tar}[]" : $tar;
+                    $insert[] = "    #[{$att}(targetEntity: {$tar}::class)]";
+                    $insert[] = "    private {$phpType} \${$prop};\n";
                 }
-            }
-            $out[] = $line;
+                $out = array_merge($insert??[],[$ln]);
+            } else $out[] = $ln;
         }
-
-        // write it back
-        file_put_contents($file, implode("\n", $out));
-        $this->info("\n✅  Updated Entity: {$file}");
+        file_put_contents($file, implode("\n",$out));
+        $this->info("✅  Updated {$file}");
         return self::SUCCESS;
     }
 
-    private function createStub(string $name, string $file): void
+    /* --------------------------------------------------------------------- */
+    /*  Helpers                                                              */
+    /* --------------------------------------------------------------------- */
+
+    private function addField(array $existing,array &$new): void
     {
-        $stub = [
-            "<?php",
-            "declare(strict_types=1);",
-            "",
-            "namespace App\\Entity;",
-            "",
-            "use MonkeysLegion\\Entity\\Attributes\\Field;",
-            "use MonkeysLegion\\Entity\\Attributes\\OneToOne;",
-            "use MonkeysLegion\\Entity\\Attributes\\OneToMany;",
-            "use MonkeysLegion\\Entity\\Attributes\\ManyToOne;",
-            "use MonkeysLegion\\Entity\\Attributes\\ManyToMany;",
-            "",
-            "class {$name}",
-            "{",
-            "    public function __construct()",
-            "    {",
-            "    }",
-            "",
-            "}",
-        ];
-        file_put_contents($file, implode("\n", $stub));
+        $prop = $this->ask('  Field name (blank to cancel)');
+        if ($prop==='') return;
+
+        if (isset($existing[$prop]) || isset($new[$prop])) {
+            $this->error("  {$prop} already exists."); return;
+        }
+        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/',$prop)) {
+            $this->error("  Invalid name."); return;
+        }
+        $type = $this->chooseOption('field',$this->fieldTypes);
+        $new[$prop]=$type;
+        $this->info("  ➕  {$prop}:{$type} added.");
     }
+
+    private function addRelation(array $existing,array &$new): void
+    {
+        $prop = $this->ask('  Relation property (blank to cancel)');
+        if ($prop==='') return;
+
+        if (isset($existing[$prop]) || isset($new[$prop])) {
+            $this->error("  {$prop} already exists."); return;
+        }
+        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/',$prop)) {
+            $this->error("  Invalid name."); return;
+        }
+        $kind = $this->chooseOption('relation',array_keys($this->relTypes));
+        $attr = $this->relTypes[$kind];
+        $fqcn = $this->ask('  Target entity FQCN');
+        if (!preg_match('/^[A-Z][A-Za-z0-9_\\\\]+$/',$fqcn)) {
+            $this->error("  Invalid class."); return;
+        }
+        $new[$prop]=['attr'=>$attr,'target'=>$fqcn];
+        $this->info("  ➕  {$prop}:{$kind} ➔ {$fqcn}");
+    }
+
+    /* Readline-aware ask() ************************************************ */
 
     private function ask(string $prompt): string
     {
-        echo $prompt . ': ';
+        if (function_exists('readline')) {
+            $line = readline($prompt.' ');
+            return $line!==false ? trim($line) : '';
+        }
+        echo $prompt.': ';
         return trim(fgets(STDIN) ?: '');
     }
 
-    protected function line(string $msg): void
+    /** Offer tab-completion for $this->completions */
+    public function readlineComplete(string $input,int $index): array
     {
-        echo $msg . "\n";
+        return array_filter($this->completions, fn($opt)=>str_starts_with($opt,$input));
     }
 
-    private function chooseOption(string $kind, array $opts): string
+    private function chooseOption(string $kind,array $opts): string
     {
-        foreach ($opts as $i => $opt) {
-            $this->line(sprintf("  [%2d] %s", $i + 1, $opt));
-        }
+        $this->line("\nAvailable {$kind} types:");
+        foreach ($opts as $i=>$opt) $this->line(sprintf("  [%2d] %s",$i+1,$opt));
+
+        $this->completions = $opts;                 // enable completion list
         while (true) {
-            $sel = $this->ask("Select {$kind} by number or name");
-            if (ctype_digit($sel) && isset($opts[(int)$sel - 1])) {
-                return $opts[(int)$sel - 1];
-            }
-            if (in_array($sel, $opts, true)) {
-                return $sel;
-            }
-            $this->error("Invalid {$kind}; try again.");
+            $sel = $this->ask("Select {$kind}");
+            if (ctype_digit($sel) && isset($opts[(int)$sel-1])) return $opts[(int)$sel-1];
+            if (in_array($sel,$opts,true))           return $sel;
+            $this->error('  Invalid choice.');
         }
+    }
+
+    private function createStub(string $name,string $file): void
+    {
+        $code = <<<PHP
+<?php
+declare(strict_types=1);
+
+namespace App\Entity;
+
+use MonkeysLegion\Entity\Attributes\Field;
+use MonkeysLegion\Entity\Attributes\OneToOne;
+use MonkeysLegion\Entity\Attributes\OneToMany;
+use MonkeysLegion\Entity\Attributes\ManyToOne;
+use MonkeysLegion\Entity\Attributes\ManyToMany;
+
+class {$name}
+{
+    public function __construct()
+    {
+    }
+}
+
+PHP;
+        file_put_contents($file,$code);
+    }
+
+    private function fail(string $msg): int
+    {
+        $this->error($msg);
+        return self::FAILURE;
     }
 }

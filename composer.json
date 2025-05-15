@@ -8,6 +8,7 @@
   "require": {
     "php": "^8.4",
     "ext-ctype": "*",
+    "ext-readline": "*",
     "monkeyscloud/monkeyslegion-core": "^1.0@dev",
     "monkeyscloud/monkeyslegion-di": "dev-main",
     "monkeyscloud/monkeyslegion-entity": "^1.0@dev"
