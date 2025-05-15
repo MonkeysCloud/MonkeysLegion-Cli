@@ -70,64 +70,94 @@ final class MakeEntityCommand extends Command
         $existingFields = array_map(fn($m) => $m[1], $fm);
         $existingRels   = array_map(fn($m) => $m[2], $rm);
 
-        // 5) Ask to add new fields
+        // 5) Interactive menu to add fields or relations
         $newFields = [];
-        $this->info("\nAvailable field types: " . implode(', ', $this->fieldTypes));
-        $this->info("Add fields (leave blank name to finish):");
+        $newRels   = [];
+
+        $this->info("\nDefine fields and relationships:");
+        $this->line("[1] Add a field");
+        $this->line("[2] Add a relationship");
+        $this->line("[3] Finish");
+
         while (true) {
-            $prop = $this->ask(' Field name');
-            if ($prop === '') break;
+            $opt = $this->ask('Choose an option [1‑3]');
+            switch ($opt) {
+                case '1':
+                    // Add Field
+                    $prop = $this->ask(' Field name (blank to cancel)');
+                    if ($prop === '') {
+                        $this->info('Cancelled adding field.');
+                        break;
+                    }
+                    if (in_array($prop, $existingFields, true) || isset($newFields[$prop])) {
+                        $this->error(" \${$prop} already defined");
+                        break;
+                    }
+                    if (! preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
+                        $this->error(" Invalid name");
+                        break;
+                    }
+                    $type = $this->chooseOption('field', $this->fieldTypes);
+                    $newFields[$prop] = $type;
+                    $this->info("  ➕  Added field \${$prop}:{$type}");
+                    break;
 
-            if (in_array($prop, $existingFields, true) || isset($newFields[$prop])) {
-                $this->error(" \${$prop} already defined"); continue;
-            }
-            if (! preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
-                $this->error(" Invalid name"); continue;
-            }
+                case '2':
+                    // Add Relation
+                    $prop = $this->ask(' Relation property name (blank to cancel)');
+                    if ($prop === '') {
+                        $this->info('Cancelled adding relation.');
+                        break;
+                    }
+                    if (in_array($prop, $existingRels, true) || isset($newRels[$prop])) {
+                        $this->error(" \${$prop} already defined");
+                        break;
+                    }
+                    if (! preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
+                        $this->error(" Invalid name");
+                        break;
+                    }
+                    $rtypeKey = $this->chooseOption('relation', array_keys($this->relTypes));
+                    $class    = $this->relTypes[$rtypeKey];
+                    $target   = $this->ask(' Target Entity FQCN (e.g. App\\Entity\\Post)');
+                    if (! preg_match('/^[A-Z][A-Za-z0-9_\\\\]+$/', $target)) {
+                        $this->error(" Invalid class name");
+                        break;
+                    }
+                    $newRels[$prop] = ['type' => $class, 'target' => $target];
+                    $this->info("  ➕  Added relation \${$prop}:{$class} ➔ {$target}");
+                    break;
 
-            $type = $this->chooseOption('field', $this->fieldTypes);
-            $newFields[$prop] = $type;
-            $this->info("  ➕  Added field \${$prop}:{$type}");
+                case '3':
+                    // Finish
+                    $this->info("Finished defining.");
+                    break 2;
+
+                default:
+                    $this->error("Invalid option; enter 1, 2, or 3.");
+            }
         }
 
-        // 6) Ask to add new relations
-        $newRels = [];
-        $this->info("\nAvailable relation types: " . implode(', ', array_keys($this->relTypes)));
-        $this->info("Add relationships (leave blank name to finish):");
-        while (true) {
-            $prop = $this->ask(' Relation property name');
-            if ($prop === '') break;
-
-            if (in_array($prop, $existingRels, true) || isset($newRels[$prop])) {
-                $this->error(" \${$prop} already defined"); continue;
-            }
-            if (! preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
-                $this->error(" Invalid name"); continue;
-            }
-
-            $rtypeKey = $this->chooseOption('relation', array_keys($this->relTypes));
-            $class    = $this->relTypes[$rtypeKey];
-            $target   = $this->ask(' Target Entity FQCN (e.g. App\\Entity\\Post)');
-            if (! preg_match('/^[A-Z][A-Za-z0-9_\\\\]+$/', $target)) {
-                $this->error(" Invalid class name"); continue;
-            }
-
-            $newRels[$prop] = ['type' => $class, 'target' => $target];
-            $this->info("  ➕  Added relation \${$prop}:{$class} ➔ {$target}");
-        }
-
-        // 7) If nothing new, exit
+        // 6) If nothing new, exit
         if (empty($newFields) && empty($newRels)) {
             $this->info("No changes; exiting.");
             return self::SUCCESS;
         }
 
-        // 8) Inject into the class before the final “}”
-        $lines = file($file, FILE_IGNORE_NEW_LINES);
-        $out   = [];
+        // 7) Inject into the class before the final “}”
+        $lines    = file($file, FILE_IGNORE_NEW_LINES);
+        $out      = [];
+        $lastLine = null;
 
-        foreach ($lines as $line) {
+        // find the index of the last '}' line
+        foreach ($lines as $i => $line) {
             if (trim($line) === '}') {
+                $lastLine = $i;
+            }
+        }
+
+        foreach ($lines as $i => $line) {
+            if ($i === $lastLine) {
                 // append new field definitions
                 foreach ($newFields as $p => $t) {
                     $out[] = "    #[Field(type: '{$t}')]";
@@ -149,6 +179,7 @@ final class MakeEntityCommand extends Command
             $out[] = $line;
         }
 
+        // write it back
         file_put_contents($file, implode("\n", $out));
         $this->info("\n✅  Updated Entity: {$file}");
         return self::SUCCESS;
