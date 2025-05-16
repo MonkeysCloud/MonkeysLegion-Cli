@@ -28,8 +28,19 @@ final class MakeEntityCommand extends Command
         'manyToMany' => 'ManyToMany',
     ];
 
+    /** owning-side attr  → inverse attr in target entity */
+    private array $inverseMap = [
+        'OneToOne'   => 'OneToOne',
+        'ManyToOne'  => 'OneToMany',
+        'OneToMany'  => 'ManyToOne',
+        'ManyToMany' => 'ManyToMany',
+    ];
+
     /** offered for readline completion */
     private array $completions = [];
+
+    /** queued inverse definitions: fqcn => [ [prop, attr, target], … ] */
+    private array $inverseQueue = [];
 
     /* ───────────────────────────────  Entry point  ─────────────────────── */
 
@@ -79,103 +90,108 @@ final class MakeEntityCommand extends Command
 
         if (!$newFields && !$newRels) { $this->info('No changes.'); return self::SUCCESS; }
 
-        /* 5️⃣  Inject code --------------------------------------------------- */
-        $lines   = file($file, FILE_IGNORE_NEW_LINES);
-        $out     = [];
-        $lastIdx = array_key_last($lines);
+        /* 5️⃣  Build code fragments ------------------------------------------ */
+        $propDefs  = [];
+        $ctorInit  = [];
+        $methodDef = [];
 
-        /** helpers to camel-/studly-case */
-        $camel   = fn(string $s) => lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $s))));
-        $studly  = fn(string $s) => ucfirst($camel($s));
+        $camel  = fn(string $s) => lcfirst(str_replace(' ', '', ucwords(str_replace('_',' ',$s))));
+        $studly = fn(string $s) => ucfirst($camel($s));
+
+        /* ── scalar fields ──────────────────────────────────────────────── */
+        foreach ($newFields as $prop => $type) {
+            $Stud = $studly($prop);
+
+            $propDefs[] = "    #[Field(type: '{$type}')]";
+            $propDefs[] = "    private {$type} \${$prop};";
+            $propDefs[] = "";
+
+            $methodDef[] = "    public function get{$Stud}(): {$type}";
+            $methodDef[] = "    { return \$this->{$prop}; }";
+            $methodDef[] = "";
+            $methodDef[] = "    public function set{$Stud}({$type} \${$prop}): self";
+            $methodDef[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
+            $methodDef[] = "";
+        }
+
+        /* ── relationships ──────────────────────────────────────────────── */
+        foreach ($newRels as $prop => $meta) {
+            $attr     = $meta['attr'];              // OneToOne …
+            $full     = $meta['target'];            // App\Entity\Company
+            $short    = substr($full,strrpos($full,'\\')+1); // Company
+            $Stud     = $studly($prop);
+            $isMany   = in_array($attr,['OneToMany','ManyToMany'],true);
+            $phpType  = $isMany ? "{$short}[]" : $short;
+
+            $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
+            $propDefs[] = "    private {$phpType} \${$prop};";
+            $propDefs[] = "";
+
+            if ($isMany) {
+                /* collection initialiser */
+                $ctorInit[] = "        \$this->{$prop} = [];";
+                /* add / remove / get */
+                $methodDef[] = "    public function add{$short}({$short} \$item): self";
+                $methodDef[] = "    { \$this->{$prop}[] = \$item; return \$this; }";
+                $methodDef[] = "";
+                $methodDef[] = "    public function remove{$short}({$short} \$item): self";
+                $methodDef[] = "    { \$this->{$prop} = array_filter(";
+                $methodDef[] = "        \$this->{$prop}, fn(\$i) => \$i !== \$item);";
+                $methodDef[] = "      return \$this; }";
+                $methodDef[] = "";
+                $methodDef[] = "    /** @return {$short}[] */";
+                $methodDef[] = "    public function get{$Stud}(): array";
+                $methodDef[] = "    { return \$this->{$prop}; }";
+            } else {
+                /* single side */
+                $methodDef[] = "    public function get{$Stud}(): ?{$short}";
+                $methodDef[] = "    { return \$this->{$prop}; }";
+                $methodDef[] = "";
+                $methodDef[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
+                $methodDef[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
+                $methodDef[] = "";
+                $methodDef[] = "    public function unset{$Stud}(): self";
+                $methodDef[] = "    { \$this->{$prop} = null; return \$this; }";
+            }
+            $methodDef[] = "";
+        }
+
+        /* 6️⃣  Inject into file -------------------------------------------- */
+        $lines      = file($file, FILE_IGNORE_NEW_LINES);
+        $inserted   = false;
+        $constructor= false;
 
         foreach ($lines as $i => $ln) {
-            /* inject just before last “}” */
-            if ($i === $lastIdx) {
-                /* ── scalar fields ─────────────────────────────── */
-                foreach ($newFields as $prop => $type) {
-                    $OutProp = $studly($prop);
-                    $out[] = "    #[Field(type: '{$type}')]";
-                    $out[] = "    private {$type} \${$prop};";
-                    $out[] = "";
-                    /* getter / setter */
-                    $out[] = "    public function get{$OutProp}(): {$type}";
-                    $out[] = "    { return \$this->{$prop}; }";
-                    $out[] = "";
-                    $out[] = "    public function set{$OutProp}({$type} \${$prop}): self";
-                    $out[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
-                    $out[] = "";
-                }
-
-                /* ── relationships ─────────────────────────────── */
-                $ctorInit = [];         // lines we‘ll push into __construct()
-                foreach ($newRels as $prop => $meta) {
-                    $attr    = $meta['attr'];                  // OneToX / ManyToX
-                    $full    = $meta['target'];                // App\Entity\Company
-                    $short   = basename(str_replace('\\', '/', $full)); // Company
-                    $OutProp = $studly($prop);
-
-                    $isMany  = in_array($attr, ['OneToMany','ManyToMany'], true);
-                    $phpType = $isMany ? "{$short}[]" : $short;
-
-                    /* attribute + property */
-                    $out[] = "    #[{$attr}(targetEntity: {$short}::class)]";
-                    $out[] = "    private {$phpType} \${$prop};";
-                    $out[] = "";
-
-                    /* ctor initialiser for collections */
-                    if ($isMany) {
-                        $ctorInit[] = "        \$this->{$prop} = [];";
-                    }
-
-                    /* accessors */
-                    if ($isMany) {
-                        /** add, remove, getter */
-                        $out[] = "    public function add{$short}({$short} \$item): self";
-                        $out[] = "    { \$this->{$prop}[] = \$item; return \$this; }";
-                        $out[] = "";
-                        $out[] = "    public function remove{$short}({$short} \$item): self";
-                        $out[] = "    { \$this->{$prop} = array_filter(";
-                        $out[] = "        \$this->{$prop}, fn(\$i) => \$i !== \$item);";
-                        $out[] = "        return \$this; }";
-                        $out[] = "";
-                        $out[] = "    /** @return {$short}[] */";
-                        $out[] = "    public function get{$OutProp}(): array";
-                        $out[] = "    { return \$this->{$prop}; }";
-                    } else {        // single side
-                        $out[] = "    public function get{$OutProp}(): ?{$short}";
-                        $out[] = "    { return \$this->{$prop}; }";
-                        $out[] = "";
-                        $out[] = "    public function set{$OutProp}(?{$short} \${$prop}): self";
-                        $out[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
-                    }
-                    $out[] = "";
-                }
-
-                /* push generated lines, then the closing brace ------------------- */
-                $out[] = $ln;
-
-                /* patch constructor if we added any collections */
-                if ($ctorInit) {
-                    // find the constructor block to inject into
-                    foreach ($out as $k => $l) {
-                        if (preg_match('/function __construct\(\)/', $l)) {
-                            // the next line is the opening "{"
-                            $braceIdx = $k + 1;
-                            // inject after opening brace
-                            array_splice($out, $braceIdx + 1, 0, $ctorInit);
-                            break;
-                        }
-                    }
-                }
+            /* after 'class X' line, insert props once */
+            if (!$inserted && preg_match('/^class\s+\w+/', $ln)) {
+                $out[]   = $ln;
+                $out     = array_merge($out, $propDefs);
+                $inserted= true;
                 continue;
             }
 
-            /* copy original line unchanged */
+            /* find constructor opening brace to push init lines */
+            if (!$constructor && preg_match('/function __construct\(\)/', $ln)) {
+                $out[]        = $ln;               // signature
+                $out[]        = $lines[$i+1];      // opening brace {
+                array_splice($out, -1, 0, $ctorInit);
+                $constructor  = true;
+                continue;
+            }
+
+            /* before final '}' add the methods */
+            if ($i === array_key_last($lines)) {
+                $out   = array_merge($out ?? [], $methodDef);
+            }
+
             $out[] = $ln;
         }
 
         file_put_contents($file, implode("\n", $out));
+
         $this->info("✅  Updated   {$file}");
+
+        $this->applyInverseQueue();
         return self::SUCCESS;
     }
 
@@ -193,28 +209,32 @@ final class MakeEntityCommand extends Command
         $this->info("  ➕  {$prop}:{$type} added.");
     }
 
-    private function wizardRelation(array $existing,array &$new): void
+    private function wizardRelation(array $existing, array &$new): void
     {
-        // ➊ choose relation kind
-        $kind = $this->chooseOption('relation',array_keys($this->relTypes));
+        /* ➊ choose relation kind */
+        $kind = $this->chooseOption('relation', array_keys($this->relTypes));
         $attr = $this->relTypes[$kind];
 
-        // ➋ detect entities for TAB completion
+        /* ➋ choose / autocomplete target entity */
         $entityDir = base_path('app/Entity');
-        $entities  = array_map(fn($f)=>basename($f,'.php'),glob($entityDir.'/*.php'));
+        $entities  = array_map(fn($f)=>basename($f,'.php'), glob($entityDir.'/*.php'));
         $this->completions = $entities;
 
-        // ➌ target FQCN (fallback to App\Entity\{X} if short name used)
-        $target = $this->ask('  Target entity class (e.g. Post or App\\Entity\\Post)');
+        $target = $this->ask('  Target entity class (short or FQCN)');
         if ($target==='') { $this->error('  Cancelled.'); return; }
-        if (!str_contains($target,'\\')) $target = "App\\Entity\\{$target}";
-        if(!preg_match('/^[A-Z][A-Za-z0-9_\\\\]+$/',$target)){
+        $short  = str_contains($target,'\\')
+            ? substr($target, strrpos($target,'\\')+1)
+            : $target;
+        $targetFqcn = str_contains($target,'\\')
+            ? $target
+            : "App\\Entity\\{$target}";
+        if (!preg_match('/^[A-Z][A-Za-z0-9_\\\\]+$/',$targetFqcn)) {
             $this->error('  Invalid class name.'); return;
         }
 
-        // ➍ suggest property name
-        $suggest = lcfirst(basename(str_replace('\\','/',$target)));
-        if (in_array($attr,['OneToMany','ManyToMany'])) $suggest .= 's';   // plural
+        /* ➌ suggest property name for THIS side */
+        $suggest = lcfirst($short);
+        if (in_array($attr,['OneToMany','ManyToMany'],true)) $suggest .= 's';
         $this->completions = [$suggest];
         $prop = $this->ask("  Property name [{$suggest}]");
         $prop = $prop!=='' ? $prop : $suggest;
@@ -222,8 +242,66 @@ final class MakeEntityCommand extends Command
         if(isset($existing[$prop])||isset($new[$prop])){ $this->error("  {$prop} exists."); return; }
         if(!preg_match('/^[a-z][A-Za-z0-9_]*$/',$prop)){ $this->error('  Invalid name.'); return; }
 
-        $new[$prop] = ['attr'=>$attr,'target'=>$target];
-        $this->info("  ➕  {$prop}:{$kind} ➔ {$target}");
+        /* ➍ inverse-side autogeneration? */
+        $wantInverse = strtolower($this->ask('  Generate inverse side in target? [y/N]'))==='y';
+        $inverseProp = null;
+        if ($wantInverse) {
+            $invAttr = $this->inverseMap[$attr];
+            $invSuggest = lcfirst($name = $_SERVER['argv'][2] ?? 'self');
+            if (in_array($invAttr,['OneToMany','ManyToMany'],true)) $invSuggest .= 's';
+            $this->completions = [$invSuggest];
+            $inverseProp = $this->ask("  Inverse property in {$short} [{$invSuggest}]");
+            $inverseProp = $inverseProp!=='' ? $inverseProp : $invSuggest;
+            $this->queueInverse(
+                $targetFqcn,
+                $inverseProp,
+                $invAttr,
+                "App\\Entity\\{$name}"
+            );
+        }
+
+        $new[$prop] = ['attr'=>$attr,'target'=>$targetFqcn];
+        $this->info("  ➕  {$prop}:{$kind} ➔ {$targetFqcn}");
+    }
+
+    /** store inverse data to be applied later */
+    private function queueInverse(string $fqcn, string $prop, string $attr, string $targetFqcn): void
+    {
+        $this->inverseQueue[$fqcn][] = [
+            'prop'   => $prop,
+            'attr'   => $attr,
+            'target' => $targetFqcn,
+        ];
+    }
+
+    /** after we finish OUR file, call this to patch every queued target */
+    private function applyInverseQueue(): void
+    {
+        foreach ($this->inverseQueue as $fqcn => $defs) {
+            $path = base_path('app/Entity/'.substr($fqcn,strrpos($fqcn,'\\')+1).'.php');
+            if (!is_file($path)) {
+                // make a stub if missing
+                $this->createStub(substr($fqcn,strrpos($fqcn,'\\')+1), $path);
+            }
+            $lines = file($path, FILE_IGNORE_NEW_LINES);
+            $out   = [];
+            $last  = array_key_last($lines);
+
+            foreach ($lines as $i=>$ln) {
+                if ($i===$last) {
+                    foreach ($defs as $d) {
+                        $short = substr($d['target'], strrpos($d['target'],'\\')+1);
+                        $phpT  = in_array($d['attr'],['OneToMany','ManyToMany']) ? "{$short}[]" : $short;
+                        $out[] = "    #[{$d['attr']}(targetEntity: {$short}::class)]";
+                        $out[] = "    private {$phpT} \$".$d['prop'].";";
+                        $out[] = "";
+                    }
+                }
+                $out[] = $ln;
+            }
+            file_put_contents($path, implode("\n",$out));
+            $this->info("    ↪  Patched inverse side in {$path}");
+        }
     }
 
     /* ────────────────────────────  Helpers  ────────────────────────────── */
