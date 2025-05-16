@@ -80,37 +80,101 @@ final class MakeEntityCommand extends Command
         if (!$newFields && !$newRels) { $this->info('No changes.'); return self::SUCCESS; }
 
         /* 5️⃣  Inject code --------------------------------------------------- */
-        $lines=file($file,FILE_IGNORE_NEW_LINES); $out=[]; $last=array_key_last($lines);
+        $lines   = file($file, FILE_IGNORE_NEW_LINES);
+        $out     = [];
+        $lastIdx = array_key_last($lines);
+
+        /** helpers to camel-/studly-case */
+        $camel   = fn(string $s) => lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $s))));
+        $studly  = fn(string $s) => ucfirst($camel($s));
 
         foreach ($lines as $i => $ln) {
-            if ($i === $last) {
-                // ▸ scalar fields…
-                foreach ($newFields as $p => $t) {
-                    $out[] = "    #[Field(type: '{$t}')]";
-                    $out[] = "    private {$t} \${$p};";
+            /* inject just before last “}” */
+            if ($i === $lastIdx) {
+                /* ── scalar fields ─────────────────────────────── */
+                foreach ($newFields as $prop => $type) {
+                    $OutProp = $studly($prop);
+                    $out[] = "    #[Field(type: '{$type}')]";
+                    $out[] = "    private {$type} \${$prop};";
+                    $out[] = "";
+                    /* getter / setter */
+                    $out[] = "    public function get{$OutProp}(): {$type}";
+                    $out[] = "    { return \$this->{$prop}; }";
+                    $out[] = "";
+                    $out[] = "    public function set{$OutProp}({$type} \${$prop}): self";
+                    $out[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
                     $out[] = "";
                 }
 
-                // ▸ relationships (short class name only)
-                foreach ($newRels as $p => $meta) {
-                    $att      = $meta['attr'];            // e.g. "ManyToOne"
-                    $fullFQCN = $meta['target'];          // e.g. "App\Entity\Company"
-                    // strip namespace, keep short name
-                    $short    = (string) substr($fullFQCN, strrpos($fullFQCN, '\\') + 1);
+                /* ── relationships ─────────────────────────────── */
+                $ctorInit = [];         // lines we‘ll push into __construct()
+                foreach ($newRels as $prop => $meta) {
+                    $attr    = $meta['attr'];                  // OneToX / ManyToX
+                    $full    = $meta['target'];                // App\Entity\Company
+                    $short   = basename(str_replace('\\', '/', $full)); // Company
+                    $OutProp = $studly($prop);
 
-                    // pick PHP type (pluralize if collection)
-                    $phpType  = in_array($att, ['OneToMany','ManyToMany'])
-                        ? "{$short}[]"
-                        : $short;
+                    $isMany  = in_array($attr, ['OneToMany','ManyToMany'], true);
+                    $phpType = $isMany ? "{$short}[]" : $short;
 
-                    $out[] = "    #[{$att}(targetEntity: {$short}::class)]";
-                    $out[] = "    private {$phpType} \${$p};";
+                    /* attribute + property */
+                    $out[] = "    #[{$attr}(targetEntity: {$short}::class)]";
+                    $out[] = "    private {$phpType} \${$prop};";
+                    $out[] = "";
+
+                    /* ctor initialiser for collections */
+                    if ($isMany) {
+                        $ctorInit[] = "        \$this->{$prop} = [];";
+                    }
+
+                    /* accessors */
+                    if ($isMany) {
+                        /** add, remove, getter */
+                        $out[] = "    public function add{$short}({$short} \$item): self";
+                        $out[] = "    { \$this->{$prop}[] = \$item; return \$this; }";
+                        $out[] = "";
+                        $out[] = "    public function remove{$short}({$short} \$item): self";
+                        $out[] = "    { \$this->{$prop} = array_filter(";
+                        $out[] = "        \$this->{$prop}, fn(\$i) => \$i !== \$item);";
+                        $out[] = "        return \$this; }";
+                        $out[] = "";
+                        $out[] = "    /** @return {$short}[] */";
+                        $out[] = "    public function get{$OutProp}(): array";
+                        $out[] = "    { return \$this->{$prop}; }";
+                    } else {        // single side
+                        $out[] = "    public function get{$OutProp}(): ?{$short}";
+                        $out[] = "    { return \$this->{$prop}; }";
+                        $out[] = "";
+                        $out[] = "    public function set{$OutProp}(?{$short} \${$prop}): self";
+                        $out[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
+                    }
                     $out[] = "";
                 }
+
+                /* push generated lines, then the closing brace ------------------- */
+                $out[] = $ln;
+
+                /* patch constructor if we added any collections */
+                if ($ctorInit) {
+                    // find the constructor block to inject into
+                    foreach ($out as $k => $l) {
+                        if (preg_match('/function __construct\(\)/', $l)) {
+                            // the next line is the opening "{"
+                            $braceIdx = $k + 1;
+                            // inject after opening brace
+                            array_splice($out, $braceIdx + 1, 0, $ctorInit);
+                            break;
+                        }
+                    }
+                }
+                continue;
             }
+
+            /* copy original line unchanged */
             $out[] = $ln;
         }
-        file_put_contents($file,implode("\n",$out));
+
+        file_put_contents($file, implode("\n", $out));
         $this->info("✅  Updated   {$file}");
         return self::SUCCESS;
     }
