@@ -81,20 +81,34 @@ final class MakeEntityCommand extends Command
 
         /* 5️⃣  Inject code --------------------------------------------------- */
         $lines=file($file,FILE_IGNORE_NEW_LINES); $out=[]; $last=array_key_last($lines);
-        foreach ($lines as $i=>$ln) {
-            if ($i===$last) {
-                foreach ($newFields as $p=>$t){
-                    $out[]="    #[Field(type: '{$t}')]";
-                    $out[]="    private {$t} \${$p};"; $out[]="";
+
+        foreach ($lines as $i => $ln) {
+            if ($i === $last) {
+                // ▸ scalar fields…
+                foreach ($newFields as $p => $t) {
+                    $out[] = "    #[Field(type: '{$t}')]";
+                    $out[] = "    private {$t} \${$p};";
+                    $out[] = "";
                 }
-                foreach ($newRels as $p=>$meta){
-                    $att=$meta['attr']; $tar=$meta['target'];
-                    $phpType=in_array($att,['OneToMany','ManyToMany'])?"{$tar}[]":$tar;
-                    $out[]="    #[{$att}(targetEntity: {$tar}::class)]";
-                    $out[]="    private {$phpType} \${$p};"; $out[]="";
+
+                // ▸ relationships (short class name only)
+                foreach ($newRels as $p => $meta) {
+                    $att      = $meta['attr'];            // e.g. "ManyToOne"
+                    $fullFQCN = $meta['target'];          // e.g. "App\Entity\Company"
+                    // strip namespace, keep short name
+                    $short    = (string) substr($fullFQCN, strrpos($fullFQCN, '\\') + 1);
+
+                    // pick PHP type (pluralize if collection)
+                    $phpType  = in_array($att, ['OneToMany','ManyToMany'])
+                        ? "{$short}[]"
+                        : $short;
+
+                    $out[] = "    #[{$att}(targetEntity: {$short}::class)]";
+                    $out[] = "    private {$phpType} \${$p};";
+                    $out[] = "";
                 }
             }
-            $out[]=$ln;
+            $out[] = $ln;
         }
         file_put_contents($file,implode("\n",$out));
         $this->info("✅  Updated   {$file}");
