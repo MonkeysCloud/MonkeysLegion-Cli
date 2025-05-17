@@ -250,15 +250,6 @@ final class MakeEntityCommand extends Command
                             $out[] = "      \$this->{$d['prop']}[] = \$item; return \$this";
                             $out[] = "    }";
                             $out[] = "";
-                            // remove
-                            $out[] = "    public function remove".ucfirst($d['prop'])."({$short} \$item): self";
-                            $out[] = "    {";
-                            $out[] = "        \$this->{$d['prop']} = array_filter(";
-                            $out[] = "            \$this->{$d['prop']}, fn(\$i) => \$i !== \$item";
-                            $out[] = "        );";
-                            $out[] = "        return \$this;";
-                            $out[] = "    }";
-                            $out[] = "";
                             // getter
                             $out[] = "    /** @return {$short}[] */";
                             $out[] = "    public function get".ucfirst($d['prop'])."(): array";
@@ -277,12 +268,6 @@ final class MakeEntityCommand extends Command
                             $out[] = "    public function set".ucfirst($d['prop'])."(?{$short} \${$d['prop']}): self";
                             $out[] = "    {";
                             $out[] = "      \$this->{$d['prop']} = \${$d['prop']}; return \$this;";
-                            $out[] = "    }";
-                            $out[] = "";
-                            // remove/unset
-                            $out[] = "    public function remove".ucfirst($d['prop'])."(): self";
-                            $out[] = "    {";
-                            $out[] = "      \$this->{$d['prop']} = null; return \$this;";
                             $out[] = "    }";
                             $out[] = "";
                         }
@@ -369,12 +354,6 @@ PHP;
         $methodDefs[] = "        return \$this;";
         $methodDefs[] = "    }";
         $methodDefs[] = "";
-        $methodDefs[] = "    public function remove{$Stud}(): self";
-        $methodDefs[] = "    {";
-        $methodDefs[] = "        \$this->{$prop} = null;";
-        $methodDefs[] = "        return \$this;";
-        $methodDefs[] = "    }";
-        $methodDefs[] = "";
     }
 
     /**
@@ -400,15 +379,6 @@ PHP;
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            $methodDefs[] = "    public function remove{$short}({$short} \$item): self";
-            $methodDefs[] = "    {";
-            $methodDefs[] = "        \$this->{$prop} = array_filter(";
-            $methodDefs[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
-            $methodDefs[] = "        );";
-            $methodDefs[] = "        return \$this;";
-            $methodDefs[] = "    }";
-            $methodDefs[] = "";
-
             $methodDefs[] = "    /** @return {$short}[] */";
             $methodDefs[] = "    public function get{$Stud}(): array";
             $methodDefs[] = "    {";
@@ -424,12 +394,6 @@ PHP;
             $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop} = \${$prop};";
-            $methodDefs[] = "        return \$this;";
-            $methodDefs[] = "    }";
-            $methodDefs[] = "";
-            $methodDefs[] = "    public function remove{$Stud}(): self";
-            $methodDefs[] = "    {";
-            $methodDefs[] = "        \$this->{$prop} = null;";
             $methodDefs[] = "        return \$this;";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
