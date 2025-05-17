@@ -172,40 +172,32 @@ final class MakeEntityCommand extends Command
             }
         }
 
-        // ─── 6️⃣ Inject into file ─────────────────────────────────────────
-        $lines = file($file, FILE_IGNORE_NEW_LINES);
-        $out   = [];
-        $lastLine = array_key_last($lines);
-        $insertedProps = false;
-        $initializedCtor = false;
+         // ─── 6️⃣ Inject into file ─────────────────────────────────────────
+        $content = file_get_contents($file);
+        if (preg_match('/^(?<header>.*?\{)(?<body>.*)(?<footer>\})\s*$/s', $content, $m)) {
+            $header = $m['header'];
+            $body   = $m['body'];
+            $footer = $m['footer'];
 
-        foreach ($lines as $i => $ln) {
-            // after copying each line, inject all props after opening class brace
-            $out[] = $ln;
-            if (!$insertedProps && trim($ln) === '{') {
-                foreach ($propDefs as $pd) {
-                    $out[] = $pd;
-                }
-                $insertedProps = true;
-            }
+            // 1) insert properties
+            $body = "\n" . implode("\n", $propDefs) . $body;
 
-            // inside constructor ⇒ insert inits
-            if ($insertedProps && !$initializedCtor && preg_match('/function __construct\(\)/', $ln)) {
-                $out[] = $lines[$i+1];                  // the `{`
-                array_splice($out, -1, 0, $ctorInits);  // inject inits just before `{`
-                $initializedCtor = true;
-                continue;
-            }
+            // 2) inject constructor inits
+            $body = preg_replace_callback(
+                '/(public function __construct\(\)\s*\{)/',
+                function($c) use ($ctorInits) {
+                    return $c[1] . "\n" . implode("\n", $ctorInits);
+                },
+                $body
+            );
 
-            // just before final `}` ⇒ inject methods
-            if ($i === $lastLine) {
-                $out   = array_merge($out, $methodDefs);
-                $out[] = $ln;
-                continue;
-            }
+            // 3) append methods
+            $body .= "\n" . implode("\n", $methodDefs) . "\n";
+
+            // 4) rebuild and write back once
+            file_put_contents($file, $header . $body . $footer . "\n");
         }
 
-        file_put_contents($file, implode("\n", $out));
         $this->info("✅  Updated   {$file}");
 
         // ─── 7️⃣ Apply inverses ────────────────────────────────────────────
