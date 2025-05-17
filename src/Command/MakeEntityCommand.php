@@ -369,6 +369,12 @@ PHP;
         $methodDefs[] = "        return \$this;";
         $methodDefs[] = "    }";
         $methodDefs[] = "";
+        $methodDefs[] = "    public function remove{$Stud}(): self";
+        $methodDefs[] = "    {";
+        $methodDefs[] = "        \$this->{$prop} = null;";
+        $methodDefs[] = "        return \$this;";
+        $methodDefs[] = "    }";
+        $methodDefs[] = "";
     }
 
     /**
