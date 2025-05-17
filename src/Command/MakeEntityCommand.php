@@ -383,21 +383,34 @@ PHP;
     private function fail(string $msg): int { $this->error($msg); return self::FAILURE; }
 
     /**
-     * Generate property, ctor-init, and method fragments for a scalar field.
+     * Generate property-, ctor-init- and method fragments for a scalar field.
      */
-    private function buildFieldFragments(string $prop, string $type, array &$propDefs, array &$ctorInits, array &$methodDefs): void
-    {
-        $Stud = ucfirst(lcfirst(str_replace(' ', '', ucwords(str_replace('_',' ',$prop)))));
-        $propDefs[] = "    #[Field(type: '{$type}')]";
-        $propDefs[] = "    private {$type} \${$prop};";
+    private function buildFieldFragments(
+        string $prop,
+        string $dbType,
+        array  &$propDefs,
+        array  &$ctorInits,
+        array  &$methodDefs
+    ): void {
+        // Map DB type (e.g. "json") → PHP type ("array"), default to given type
+        $phpType = $this->phpTypeMap[$dbType] ?? $dbType;
+
+        // Studly-case version of the property name for method names
+        $Stud = ucfirst(lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $prop)))));
+
+        /* ------------------------------------------------- property & attribute */
+        $propDefs[] = "    #[Field(type: '{$dbType}')]";
+        $propDefs[] = "    private {$phpType} \${$prop};";
         $propDefs[] = "";
 
-        $methodDefs[] = "    public function get{$Stud}(): {$type}";
+        /* ----------------------------------------------------------- get + set */
+        $methodDefs[] = "    public function get{$Stud}(): {$phpType}";
         $methodDefs[] = "    {";
         $methodDefs[] = "        return \$this->{$prop};";
         $methodDefs[] = "    }";
         $methodDefs[] = "";
-        $methodDefs[] = "    public function set{$Stud}({$type} \${$prop}): self";
+
+        $methodDefs[] = "    public function set{$Stud}({$phpType} \${$prop}): self";
         $methodDefs[] = "    {";
         $methodDefs[] = "        \$this->{$prop} = \${$prop};";
         $methodDefs[] = "        return \$this;";
