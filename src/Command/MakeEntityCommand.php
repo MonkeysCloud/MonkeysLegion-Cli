@@ -100,88 +100,12 @@ final class MakeEntityCommand extends Command
 
         // ── scalar fields ─────────────────────────────────────────────
         foreach ($newFields as $prop => $type) {
-            $Stud = $studly($prop);
-            // property
-            $propDefs[] = "    #[Field(type: '{$type}')]";
-            $propDefs[] = "    private {$type} \${$prop};";
-            $propDefs[] = "";
-
-            // getter
-            $methodDefs[] = "    public function get{$Stud}(): {$type}";
-            $methodDefs[] = "    {";
-            $methodDefs[] = "        return \$this->{$prop};";
-            $methodDefs[] = "    }";
-            $methodDefs[] = "";
-            // setter
-            $methodDefs[] = "    public function set{$Stud}({$type} \${$prop}): self";
-            $methodDefs[] = "    {";
-            $methodDefs[] = "        \$this->{$prop} = \${$prop};";
-            $methodDefs[] = "        return \$this;";
-            $methodDefs[] = "    }";
-            $methodDefs[] = "";
+            $this->buildFieldFragments($prop, $type, $propDefs, $ctorInits, $methodDefs);
         }
 
         // ── relationships ─────────────────────────────────────────────
         foreach ($newRels as $prop => $meta) {
-            $attr  = $meta['attr'];
-            $full  = $meta['target'];
-            $short = substr($full, strrpos($full,'\\')+1);
-            $Stud  = $studly($prop);
-            $isMany = in_array($attr, ['OneToMany','ManyToMany'], true);
-
-            // property
-            $phpType = $isMany ? "{$short}[]" : $short;
-            $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
-            $propDefs[] = "    private {$phpType} \${$prop};";
-            $propDefs[] = "";
-
-            // constructor init for collections
-            if ($isMany) {
-                $ctorInits[] = "        \$this->{$prop} = [];";
-            }
-
-            // methods
-            if ($isMany) {
-                // add
-                $methodDefs[] = "    public function add{$short}({$short} \$item): self";
-                $methodDefs[] = "    { \$this->{$prop}[] = \$item; return \$this; }";
-                $methodDefs[] = "";
-                // remove
-                $methodDefs[] = "    public function remove{$short}({$short} \$item): self";
-                $methodDefs[] = "    {";
-                $methodDefs[] = "        \$this->{$prop} = array_filter(";
-                $methodDefs[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
-                $methodDefs[] = "        );";
-                $methodDefs[] = "        return \$this;";
-                $methodDefs[] = "    }";
-                $methodDefs[] = "";
-                // getter
-                $methodDefs[] = "    /** @return {$short}[] */";
-                $methodDefs[] = "    public function get{$Stud}(): array";
-                $methodDefs[] = "    { return \$this->{$prop}; }";
-                $methodDefs[] = "";
-            } else {
-                // getter
-                $methodDefs[] = "    public function get{$Stud}(): ?{$short}";
-                $methodDefs[] = "    {";
-                $methodDefs[] = "        return \$this->{$prop};";
-                $methodDefs[] = "    }";
-                $methodDefs[] = "";
-                // setter
-                $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
-                $methodDefs[] = "    {";
-                $methodDefs[] = "        \$this->{$prop} = \${$prop};";
-                $methodDefs[] = "        return \$this;";
-                $methodDefs[] = "    }";
-                $methodDefs[] = "";
-                // remove
-                $methodDefs[] = "    public function remove{$Stud}(): self";
-                $methodDefs[] = "    {";
-                $methodDefs[] = "        \$this->{$prop} = null;";
-                $methodDefs[] = "        return \$this;";
-                $methodDefs[] = "    }";
-                $methodDefs[] = "";
-            }
+            $this->buildRelationFragments($prop, $meta['attr'], $meta['target'], $propDefs, $ctorInits, $methodDefs);
         }
 
          // ─── 6️⃣ Inject into file ─────────────────────────────────────────
@@ -322,7 +246,9 @@ final class MakeEntityCommand extends Command
                         if (in_array($d['attr'], ['OneToMany','ManyToMany'], true)) {
                             // add
                             $out[] = "    public function add".ucfirst($d['prop'])."({$short} \$item): self";
-                            $out[] = "    { \$this->{$d['prop']}[] = \$item; return \$this; }";
+                            $out[] = "    {";
+                            $out[] = "      \$this->{$d['prop']}[] = \$item; return \$this";
+                            $out[] = "    }";
                             $out[] = "";
                             // remove
                             $out[] = "    public function remove".ucfirst($d['prop'])."({$short} \$item): self";
@@ -336,20 +262,28 @@ final class MakeEntityCommand extends Command
                             // getter
                             $out[] = "    /** @return {$short}[] */";
                             $out[] = "    public function get".ucfirst($d['prop'])."(): array";
-                            $out[] = "    { return \$this->{$d['prop']}; }";
+                            $out[] = "    {";
+                            $out[] = "      return \$this->{$d['prop']};";
+                            $out[] = "    }";
                             $out[] = "";
                         } else {
                             // getter
                             $out[] = "    public function get".ucfirst($d['prop'])."(): ?{$short}";
-                            $out[] = "    { return \$this->{$d['prop']}; }";
+                            $out[] = "    {";
+                            $out[] = "      return \$this->{$d['prop']};";
+                            $out[] = "    }";
                             $out[] = "";
                             // setter
                             $out[] = "    public function set".ucfirst($d['prop'])."(?{$short} \${$d['prop']}): self";
-                            $out[] = "    { \$this->{$d['prop']} = \${$d['prop']}; return \$this; }";
+                            $out[] = "    {";
+                            $out[] = "      \$this->{$d['prop']} = \${$d['prop']}; return \$this;";
+                            $out[] = "    }";
                             $out[] = "";
                             // remove/unset
                             $out[] = "    public function remove".ucfirst($d['prop'])."(): self";
-                            $out[] = "    { \$this->{$d['prop']} = null; return \$this; }";
+                            $out[] = "    {";
+                            $out[] = "      \$this->{$d['prop']} = null; return \$this;";
+                            $out[] = "    }";
                             $out[] = "";
                         }
                     }
@@ -413,4 +347,86 @@ PHP;
     }
 
     private function fail(string $msg): int { $this->error($msg); return self::FAILURE; }
+
+    /**
+     * Generate property, ctor-init, and method fragments for a scalar field.
+     */
+    private function buildFieldFragments(string $prop, string $type, array &$propDefs, array &$ctorInits, array &$methodDefs): void
+    {
+        $Stud = ucfirst(lcfirst(str_replace(' ', '', ucwords(str_replace('_',' ',$prop)))));
+        $propDefs[] = "    #[Field(type: '{$type}')]";
+        $propDefs[] = "    private {$type} \${$prop};";
+        $propDefs[] = "";
+
+        $methodDefs[] = "    public function get{$Stud}(): {$type}";
+        $methodDefs[] = "    {";
+        $methodDefs[] = "        return \$this->{$prop};";
+        $methodDefs[] = "    }";
+        $methodDefs[] = "";
+        $methodDefs[] = "    public function set{$Stud}({$type} \${$prop}): self";
+        $methodDefs[] = "    {";
+        $methodDefs[] = "        \$this->{$prop} = \${$prop};";
+        $methodDefs[] = "        return \$this;";
+        $methodDefs[] = "    }";
+        $methodDefs[] = "";
+    }
+
+    /**
+     * Generate property, ctor-init, and method fragments for a relation.
+     */
+    private function buildRelationFragments(string $prop, string $attr, string $full, array &$propDefs, array &$ctorInits, array &$methodDefs): void
+    {
+        $short  = substr($full, strrpos($full,'\\') + 1);
+        $Stud   = ucfirst(lcfirst(str_replace(' ', '', ucwords(str_replace('_',' ',$prop)))));
+        $isMany = in_array($attr, ['OneToMany','ManyToMany'], true);
+
+        $phpType = $isMany ? "{$short}[]" : $short;
+        $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
+        $propDefs[] = "    private {$phpType} \${$prop};";
+        $propDefs[] = "";
+
+        if ($isMany) {
+            $ctorInits[] = "        \$this->{$prop} = [];";
+            $methodDefs[] = "    public function add{$short}({$short} \$item): self";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        \$this->{$prop}[] = \$item;";
+            $methodDefs[] = "        return \$this;";
+            $methodDefs[] = "    }";
+            $methodDefs[] = "";
+
+            $methodDefs[] = "    public function remove{$short}({$short} \$item): self";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        \$this->{$prop} = array_filter(";
+            $methodDefs[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
+            $methodDefs[] = "        );";
+            $methodDefs[] = "        return \$this;";
+            $methodDefs[] = "    }";
+            $methodDefs[] = "";
+
+            $methodDefs[] = "    /** @return {$short}[] */";
+            $methodDefs[] = "    public function get{$Stud}(): array";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        return \$this->{$prop};";
+            $methodDefs[] = "    }";
+            $methodDefs[] = "";
+        } else {
+            $methodDefs[] = "    public function get{$Stud}(): ?{$short}";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        return \$this->{$prop};";
+            $methodDefs[] = "    }";
+            $methodDefs[] = "";
+            $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        \$this->{$prop} = \${$prop};";
+            $methodDefs[] = "        return \$this;";
+            $methodDefs[] = "    }";
+            $methodDefs[] = "";
+            $methodDefs[] = "    public function remove{$Stud}(): self";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        \$this->{$prop} = null;";
+            $methodDefs[] = "        return \$this;";
+            $methodDefs[] = "    }";
+            $methodDefs[] = "";
+        }
+    }
 }
