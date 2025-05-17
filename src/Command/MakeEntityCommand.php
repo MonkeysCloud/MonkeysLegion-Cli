@@ -435,9 +435,9 @@ PHP;
 
         /* ───────────── property & attribute ───────────── */
         if ($isMany) {
-            $propDefs[] = "    /** @var {$short}[] */";
-            $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
-            $propDefs[] = "    private array \${$prop};";
+            $propDefs[]  = "    /** @var {$short}[] */";
+            $propDefs[]  = "    #[{$attr}(targetEntity: {$short}::class)]";
+            $propDefs[]  = "    private array \${$prop};";
             $ctorInits[] = "        \$this->{$prop} = [];";
         } else {
             $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
@@ -447,7 +447,7 @@ PHP;
 
         /* ───────────── methods ───────────── */
         if ($isMany) {
-            /* add */
+            // add()
             $methodDefs[] = "    public function add{$short}({$short} \$item): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop}[] = \$item;";
@@ -455,7 +455,7 @@ PHP;
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            /* remove */
+            // remove()
             $methodDefs[] = "    public function remove{$short}({$short} \$item): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop} = array_filter(";
@@ -465,7 +465,7 @@ PHP;
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            /* getter */
+            // getter()
             $methodDefs[] = "    /** @return {$short}[] */";
             $methodDefs[] = "    public function get{$Stud}(): array";
             $methodDefs[] = "    {";
@@ -473,14 +473,14 @@ PHP;
             $methodDefs[] = "    }";
             $methodDefs[] = "";
         } else {
-            /* getter */
+            // getter()
             $methodDefs[] = "    public function get{$Stud}(): ?{$short}";
             $methodDefs[] = "    {";
             $methodDefs[] = "        return \$this->{$prop};";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            /* setter */
+            // setter()
             $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop} = \${$prop};";
@@ -488,7 +488,7 @@ PHP;
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            /* unset */
+            // unset()
             $methodDefs[] = "    public function remove{$Stud}(): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop} = null;";
