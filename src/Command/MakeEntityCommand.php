@@ -180,17 +180,17 @@ final class MakeEntityCommand extends Command
         $initializedCtor = false;
 
         foreach ($lines as $i => $ln) {
-            // after `class X` line ⇒ insert all props
-            if (!$insertedProps && preg_match('/^class\s+\w+/', $ln)) {
-                $out[] = $ln;
-                $out   = array_merge($out, $propDefs);
+            // after copying each line, inject all props after opening class brace
+            $out[] = $ln;
+            if (!$insertedProps && trim($ln) === '{') {
+                foreach ($propDefs as $pd) {
+                    $out[] = $pd;
+                }
                 $insertedProps = true;
-                continue;
             }
 
             // inside constructor ⇒ insert inits
             if ($insertedProps && !$initializedCtor && preg_match('/function __construct\(\)/', $ln)) {
-                $out[] = $ln;                           // signature
                 $out[] = $lines[$i+1];                  // the `{`
                 array_splice($out, -1, 0, $ctorInits);  // inject inits just before `{`
                 $initializedCtor = true;
@@ -203,9 +203,6 @@ final class MakeEntityCommand extends Command
                 $out[] = $ln;
                 continue;
             }
-
-            // default: copy line
-            $out[] = $ln;
         }
 
         file_put_contents($file, implode("\n", $out));
