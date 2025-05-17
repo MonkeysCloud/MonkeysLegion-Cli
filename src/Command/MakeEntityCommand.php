@@ -108,17 +108,16 @@ final class MakeEntityCommand extends Command
 
             // getter
             $methodDefs[] = "    public function get{$Stud}(): {$type}";
-            $methodDefs[] = "    { return \$this->{$prop}; }";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        return \$this->{$prop};";
+            $methodDefs[] = "    }";
             $methodDefs[] = "";
-
             // setter
             $methodDefs[] = "    public function set{$Stud}({$type} \${$prop}): self";
-            $methodDefs[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
-            $methodDefs[] = "";
-
-            // remove
-            $methodDefs[] = "    public function remove{$Stud}(): self";
-            $methodDefs[] = "    { \$this->{$prop} = null; return \$this; }";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        \$this->{$prop} = \${$prop};";
+            $methodDefs[] = "        return \$this;";
+            $methodDefs[] = "    }";
             $methodDefs[] = "";
         }
 
@@ -162,17 +161,25 @@ final class MakeEntityCommand extends Command
                 $methodDefs[] = "    { return \$this->{$prop}; }";
                 $methodDefs[] = "";
             } else {
-                // single-side getter
+                // getter
                 $methodDefs[] = "    public function get{$Stud}(): ?{$short}";
-                $methodDefs[] = "    { return \$this->{$prop}; }";
+                $methodDefs[] = "    {";
+                $methodDefs[] = "        return \$this->{$prop};";
+                $methodDefs[] = "    }";
                 $methodDefs[] = "";
                 // setter
                 $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
-                $methodDefs[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
+                $methodDefs[] = "    {";
+                $methodDefs[] = "        \$this->{$prop} = \${$prop};";
+                $methodDefs[] = "        return \$this;";
+                $methodDefs[] = "    }";
                 $methodDefs[] = "";
                 // remove
                 $methodDefs[] = "    public function remove{$Stud}(): self";
-                $methodDefs[] = "    { \$this->{$prop} = null; return \$this; }";
+                $methodDefs[] = "    {";
+                $methodDefs[] = "        \$this->{$prop} = null;";
+                $methodDefs[] = "        return \$this;";
+                $methodDefs[] = "    }";
                 $methodDefs[] = "";
             }
         }
@@ -311,6 +318,40 @@ final class MakeEntityCommand extends Command
                         $out[] = "    #[{$d['attr']}(targetEntity: {$short}::class)]";
                         $out[] = "    private {$phpT} \$".$d['prop'].";";
                         $out[] = "";
+                        // ─── Relation methods ─────────────────────────────────────
+                        if (in_array($d['attr'], ['OneToMany','ManyToMany'], true)) {
+                            // add
+                            $out[] = "    public function add".ucfirst($d['prop'])."({$short} \$item): self";
+                            $out[] = "    { \$this->{$d['prop']}[] = \$item; return \$this; }";
+                            $out[] = "";
+                            // remove
+                            $out[] = "    public function remove".ucfirst($d['prop'])."({$short} \$item): self";
+                            $out[] = "    {";
+                            $out[] = "        \$this->{$d['prop']} = array_filter(";
+                            $out[] = "            \$this->{$d['prop']}, fn(\$i) => \$i !== \$item";
+                            $out[] = "        );";
+                            $out[] = "        return \$this;";
+                            $out[] = "    }";
+                            $out[] = "";
+                            // getter
+                            $out[] = "    /** @return {$short}[] */";
+                            $out[] = "    public function get".ucfirst($d['prop'])."(): array";
+                            $out[] = "    { return \$this->{$d['prop']}; }";
+                            $out[] = "";
+                        } else {
+                            // getter
+                            $out[] = "    public function get".ucfirst($d['prop'])."(): ?{$short}";
+                            $out[] = "    { return \$this->{$d['prop']}; }";
+                            $out[] = "";
+                            // setter
+                            $out[] = "    public function set".ucfirst($d['prop'])."(?{$short} \${$d['prop']}): self";
+                            $out[] = "    { \$this->{$d['prop']} = \${$d['prop']}; return \$this; }";
+                            $out[] = "";
+                            // remove/unset
+                            $out[] = "    public function remove".ucfirst($d['prop'])."(): self";
+                            $out[] = "    { \$this->{$d['prop']} = null; return \$this; }";
+                            $out[] = "";
+                        }
                     }
                 }
                 $out[] = $ln;
