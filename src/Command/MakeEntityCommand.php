@@ -115,6 +115,11 @@ final class MakeEntityCommand extends Command
             $methodDefs[] = "    public function set{$Stud}({$type} \${$prop}): self";
             $methodDefs[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
             $methodDefs[] = "";
+
+            // remove
+            $methodDefs[] = "    public function remove{$Stud}(): self";
+            $methodDefs[] = "    { \$this->{$prop} = null; return \$this; }";
+            $methodDefs[] = "";
         }
 
         // ── relationships ─────────────────────────────────────────────
@@ -165,8 +170,8 @@ final class MakeEntityCommand extends Command
                 $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
                 $methodDefs[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
                 $methodDefs[] = "";
-                // unset
-                $methodDefs[] = "    public function unset{$Stud}(): self";
+                // remove
+                $methodDefs[] = "    public function remove{$Stud}(): self";
                 $methodDefs[] = "    { \$this->{$prop} = null; return \$this; }";
                 $methodDefs[] = "";
             }
