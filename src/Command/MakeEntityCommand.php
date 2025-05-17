@@ -419,7 +419,7 @@ PHP;
     }
 
     /**
-     * Generate property, ctor-init, and method fragments for a relation.
+     * Generate fragments for a relation property + its methods.
      */
     private function buildRelationFragments(
         string $prop,
@@ -429,45 +429,34 @@ PHP;
         array  &$ctorInits,
         array  &$methodDefs
     ): void {
-        // short class name (e.g. “Company” from “App\Entity\Company”)
-        $short = substr($full, strrpos($full, '\\') + 1);
+        $short   = substr($full, strrpos($full, '\\') + 1);                // "Project"
+        $Stud    = ucfirst(lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $prop)))));
+        $isMany  = in_array($attr, ['OneToMany', 'ManyToMany'], true);
 
-        // map the short name through your phpTypeMap if present
-        $baseType = $this->phpTypeMap[$short] ?? $short;
-
-        // StudlyCase prop name
-        $Stud = ucfirst(lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $prop)))));
-
-        // is this a collection?
-        $isMany = in_array($attr, ['OneToMany','ManyToMany'], true);
-
-        // final PHP type (pluralize if needed)
-        $phpType = $isMany
-            ? "{$baseType}[]"
-            : $baseType;
-
-        // 1) property + attribute
-        $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
-        $propDefs[] = "    private {$phpType} \${$prop};";
+        /* ───────────── property & attribute ───────────── */
+        if ($isMany) {
+            $propDefs[] = "    /** @var {$short}[] */";
+            $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
+            $propDefs[] = "    private array \${$prop};";
+            $ctorInits[] = "        \$this->{$prop} = [];";
+        } else {
+            $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
+            $propDefs[] = "    private ?{$short} \${$prop} = null;";
+        }
         $propDefs[] = "";
 
-        // 2) constructor initialization for collections
+        /* ───────────── methods ───────────── */
         if ($isMany) {
-            $ctorInits[] = "        \$this->{$prop} = [];";
-        }
-
-        // 3) methods
-        if ($isMany) {
-            // add()
-            $methodDefs[] = "    public function add{$short}({$baseType} \$item): self";
+            /* add */
+            $methodDefs[] = "    public function add{$short}({$short} \$item): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop}[] = \$item;";
             $methodDefs[] = "        return \$this;";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            // remove()
-            $methodDefs[] = "    public function remove{$short}({$baseType} \$item): self";
+            /* remove */
+            $methodDefs[] = "    public function remove{$short}({$short} \$item): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop} = array_filter(";
             $methodDefs[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
@@ -476,30 +465,30 @@ PHP;
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            // getCollection()
-            $methodDefs[] = "    /** @return {$baseType}[] */";
+            /* getter */
+            $methodDefs[] = "    /** @return {$short}[] */";
             $methodDefs[] = "    public function get{$Stud}(): array";
             $methodDefs[] = "    {";
             $methodDefs[] = "        return \$this->{$prop};";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
         } else {
-            // single‐side getter
-            $methodDefs[] = "    public function get{$Stud}(): ?{$baseType}";
+            /* getter */
+            $methodDefs[] = "    public function get{$Stud}(): ?{$short}";
             $methodDefs[] = "    {";
             $methodDefs[] = "        return \$this->{$prop};";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            // single‐side setter
-            $methodDefs[] = "    public function set{$Stud}(?{$baseType} \${$prop}): self";
+            /* setter */
+            $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop} = \${$prop};";
             $methodDefs[] = "        return \$this;";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            // remove/unset()
+            /* unset */
             $methodDefs[] = "    public function remove{$Stud}(): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop} = null;";
