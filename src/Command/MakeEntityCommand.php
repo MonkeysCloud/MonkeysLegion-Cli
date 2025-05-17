@@ -90,108 +90,130 @@ final class MakeEntityCommand extends Command
 
         if (!$newFields && !$newRels) { $this->info('No changes.'); return self::SUCCESS; }
 
-        /* 5️⃣  Build code fragments ------------------------------------------ */
-        $propDefs  = [];
-        $ctorInit  = [];
-        $methodDef = [];
+        // ─── 5️⃣ Build fragments ────────────────────────────────────────
+        $propDefs   = [];
+        $ctorInits  = [];
+        $methodDefs = [];
 
-        $camel  = fn(string $s) => lcfirst(str_replace(' ', '', ucwords(str_replace('_',' ',$s))));
+        $camel  = fn(string $s)  => lcfirst(str_replace(' ', '', ucwords(str_replace('_',' ',$s))));
         $studly = fn(string $s) => ucfirst($camel($s));
 
-        /* ── scalar fields ──────────────────────────────────────────────── */
+        // ── scalar fields ─────────────────────────────────────────────
         foreach ($newFields as $prop => $type) {
             $Stud = $studly($prop);
-
+            // property
             $propDefs[] = "    #[Field(type: '{$type}')]";
             $propDefs[] = "    private {$type} \${$prop};";
             $propDefs[] = "";
 
-            $methodDef[] = "    public function get{$Stud}(): {$type}";
-            $methodDef[] = "    { return \$this->{$prop}; }";
-            $methodDef[] = "";
-            $methodDef[] = "    public function set{$Stud}({$type} \${$prop}): self";
-            $methodDef[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
-            $methodDef[] = "";
+            // getter
+            $methodDefs[] = "    public function get{$Stud}(): {$type}";
+            $methodDefs[] = "    { return \$this->{$prop}; }";
+            $methodDefs[] = "";
+
+            // setter
+            $methodDefs[] = "    public function set{$Stud}({$type} \${$prop}): self";
+            $methodDefs[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
+            $methodDefs[] = "";
         }
 
-        /* ── relationships ──────────────────────────────────────────────── */
+        // ── relationships ─────────────────────────────────────────────
         foreach ($newRels as $prop => $meta) {
-            $attr     = $meta['attr'];              // OneToOne …
-            $full     = $meta['target'];            // App\Entity\Company
-            $short    = substr($full,strrpos($full,'\\')+1); // Company
-            $Stud     = $studly($prop);
-            $isMany   = in_array($attr,['OneToMany','ManyToMany'],true);
-            $phpType  = $isMany ? "{$short}[]" : $short;
+            $attr  = $meta['attr'];
+            $full  = $meta['target'];
+            $short = substr($full, strrpos($full,'\\')+1);
+            $Stud  = $studly($prop);
+            $isMany = in_array($attr, ['OneToMany','ManyToMany'], true);
 
+            // property
+            $phpType = $isMany ? "{$short}[]" : $short;
             $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
             $propDefs[] = "    private {$phpType} \${$prop};";
             $propDefs[] = "";
 
+            // constructor init for collections
             if ($isMany) {
-                /* collection initialiser */
-                $ctorInit[] = "        \$this->{$prop} = [];";
-                /* add / remove / get */
-                $methodDef[] = "    public function add{$short}({$short} \$item): self";
-                $methodDef[] = "    { \$this->{$prop}[] = \$item; return \$this; }";
-                $methodDef[] = "";
-                $methodDef[] = "    public function remove{$short}({$short} \$item): self";
-                $methodDef[] = "    { \$this->{$prop} = array_filter(";
-                $methodDef[] = "        \$this->{$prop}, fn(\$i) => \$i !== \$item);";
-                $methodDef[] = "      return \$this; }";
-                $methodDef[] = "";
-                $methodDef[] = "    /** @return {$short}[] */";
-                $methodDef[] = "    public function get{$Stud}(): array";
-                $methodDef[] = "    { return \$this->{$prop}; }";
-            } else {
-                /* single side */
-                $methodDef[] = "    public function get{$Stud}(): ?{$short}";
-                $methodDef[] = "    { return \$this->{$prop}; }";
-                $methodDef[] = "";
-                $methodDef[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
-                $methodDef[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
-                $methodDef[] = "";
-                $methodDef[] = "    public function unset{$Stud}(): self";
-                $methodDef[] = "    { \$this->{$prop} = null; return \$this; }";
+                $ctorInits[] = "        \$this->{$prop} = [];";
             }
-            $methodDef[] = "";
+
+            // methods
+            if ($isMany) {
+                // add
+                $methodDefs[] = "    public function add{$short}({$short} \$item): self";
+                $methodDefs[] = "    { \$this->{$prop}[] = \$item; return \$this; }";
+                $methodDefs[] = "";
+                // remove
+                $methodDefs[] = "    public function remove{$short}({$short} \$item): self";
+                $methodDefs[] = "    {";
+                $methodDefs[] = "        \$this->{$prop} = array_filter(";
+                $methodDefs[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
+                $methodDefs[] = "        );";
+                $methodDefs[] = "        return \$this;";
+                $methodDefs[] = "    }";
+                $methodDefs[] = "";
+                // getter
+                $methodDefs[] = "    /** @return {$short}[] */";
+                $methodDefs[] = "    public function get{$Stud}(): array";
+                $methodDefs[] = "    { return \$this->{$prop}; }";
+                $methodDefs[] = "";
+            } else {
+                // single-side getter
+                $methodDefs[] = "    public function get{$Stud}(): ?{$short}";
+                $methodDefs[] = "    { return \$this->{$prop}; }";
+                $methodDefs[] = "";
+                // setter
+                $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
+                $methodDefs[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
+                $methodDefs[] = "";
+                // unset
+                $methodDefs[] = "    public function unset{$Stud}(): self";
+                $methodDefs[] = "    { \$this->{$prop} = null; return \$this; }";
+                $methodDefs[] = "";
+            }
         }
 
-        /* 6️⃣  Inject into file -------------------------------------------- */
-        $lines      = file($file, FILE_IGNORE_NEW_LINES);
-        $inserted   = false;
-        $constructor= false;
+        // ─── 6️⃣ Inject into file ─────────────────────────────────────────
+        $lines = file($file, FILE_IGNORE_NEW_LINES);
+        $out   = [];
+        $lastLine = array_key_last($lines);
+        $insertedProps = false;
+        $initializedCtor = false;
 
         foreach ($lines as $i => $ln) {
-            /* after 'class X' line, insert props once */
-            if (!$inserted && preg_match('/^class\s+\w+/', $ln)) {
-                $out[]   = $ln;
-                $out     = array_merge($out, $propDefs);
-                $inserted= true;
+            // after `class X` line ⇒ insert all props
+            if (!$insertedProps && preg_match('/^class\s+\w+/', $ln)) {
+                $out[] = $ln;
+                $out   = array_merge($out, $propDefs);
+                $insertedProps = true;
                 continue;
             }
 
-            /* find constructor opening brace to push init lines */
-            if (!$constructor && preg_match('/function __construct\(\)/', $ln)) {
-                $out[]        = $ln;               // signature
-                $out[]        = $lines[$i+1];      // opening brace {
-                array_splice($out, -1, 0, $ctorInit);
-                $constructor  = true;
+            // inside constructor ⇒ insert inits
+            if ($insertedProps && !$initializedCtor && preg_match('/function __construct\(\)/', $ln)) {
+                $out[] = $ln;                           // signature
+                $out[] = $lines[$i+1];                  // the `{`
+                array_splice($out, -1, 0, $ctorInits);  // inject inits just before `{`
+                $initializedCtor = true;
                 continue;
             }
 
-            /* before final '}' add the methods */
-            if ($i === array_key_last($lines)) {
-                $out   = array_merge($out ?? [], $methodDef);
+            // just before final `}` ⇒ inject methods
+            if ($i === $lastLine) {
+                $out   = array_merge($out, $methodDefs);
+                $out[] = $ln;
+                continue;
             }
 
+            // default: copy line
             $out[] = $ln;
         }
 
         file_put_contents($file, implode("\n", $out));
-
         $this->info("✅  Updated   {$file}");
 
+        // ─── 7️⃣ Apply inverses ────────────────────────────────────────────
         $this->applyInverseQueue();
+
         return self::SUCCESS;
     }
 
