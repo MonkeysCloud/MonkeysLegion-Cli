@@ -36,6 +36,55 @@ final class MakeEntityCommand extends Command
         'ManyToMany' => 'ManyToMany',
     ];
 
+    /**
+     * db-type → PHP type for property & methods
+     */
+    private array $phpTypeMap = [
+        // text types
+        'string'         => 'string',
+        'char'           => 'string',
+        'text'           => 'string',
+        'mediumText'     => 'string',
+        'longText'       => 'string',
+
+        // numeric types
+        'integer'        => 'int',
+        'tinyInt'        => 'int',
+        'smallInt'       => 'int',
+        'bigInt'         => 'int',
+        'unsignedBigInt' => 'int',
+        'decimal'        => 'float',
+        'float'          => 'float',
+        'boolean'        => 'bool',
+        'year'           => 'int',
+
+        // date/time
+        'date'           => '\DateTimeImmutable',
+        'time'           => '\DateTimeImmutable',
+        'datetime'       => '\DateTimeImmutable',
+        'datetimetz'     => '\DateTimeImmutable',
+        'timestamp'      => '\DateTimeImmutable',
+        'timestamptz'    => '\DateTimeImmutable',
+
+        // special / structured
+        'json'           => 'array',
+        'simple_json'    => 'array',
+        'array'          => 'array',
+        'simple_array'   => 'array',
+        'set'            => 'array',
+
+        // miscellany
+        'uuid'           => 'string',
+        'binary'         => 'string',
+        'enum'           => 'string',
+        'geometry'       => 'string',
+        'point'          => 'string',
+        'linestring'     => 'string',
+        'polygon'        => 'string',
+        'ipAddress'      => 'string',
+        'macAddress'     => 'string',
+    ];
+
     /** offered for readline completion */
     private array $completions = [];
 
@@ -359,41 +408,88 @@ PHP;
     /**
      * Generate property, ctor-init, and method fragments for a relation.
      */
-    private function buildRelationFragments(string $prop, string $attr, string $full, array &$propDefs, array &$ctorInits, array &$methodDefs): void
-    {
-        $short  = substr($full, strrpos($full,'\\') + 1);
-        $Stud   = ucfirst(lcfirst(str_replace(' ', '', ucwords(str_replace('_',' ',$prop)))));
+    private function buildRelationFragments(
+        string $prop,
+        string $attr,
+        string $full,
+        array  &$propDefs,
+        array  &$ctorInits,
+        array  &$methodDefs
+    ): void {
+        // short class name (e.g. “Company” from “App\Entity\Company”)
+        $short = substr($full, strrpos($full, '\\') + 1);
+
+        // map the short name through your phpTypeMap if present
+        $baseType = $this->phpTypeMap[$short] ?? $short;
+
+        // StudlyCase prop name
+        $Stud = ucfirst(lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $prop)))));
+
+        // is this a collection?
         $isMany = in_array($attr, ['OneToMany','ManyToMany'], true);
 
-        $phpType = $isMany ? "{$short}[]" : $short;
+        // final PHP type (pluralize if needed)
+        $phpType = $isMany
+            ? "{$baseType}[]"
+            : $baseType;
+
+        // 1) property + attribute
         $propDefs[] = "    #[{$attr}(targetEntity: {$short}::class)]";
         $propDefs[] = "    private {$phpType} \${$prop};";
         $propDefs[] = "";
 
+        // 2) constructor initialization for collections
         if ($isMany) {
             $ctorInits[] = "        \$this->{$prop} = [];";
-            $methodDefs[] = "    public function add{$short}({$short} \$item): self";
+        }
+
+        // 3) methods
+        if ($isMany) {
+            // add()
+            $methodDefs[] = "    public function add{$short}({$baseType} \$item): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop}[] = \$item;";
             $methodDefs[] = "        return \$this;";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
 
-            $methodDefs[] = "    /** @return {$short}[] */";
+            // remove()
+            $methodDefs[] = "    public function remove{$short}({$baseType} \$item): self";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        \$this->{$prop} = array_filter(";
+            $methodDefs[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
+            $methodDefs[] = "        );";
+            $methodDefs[] = "        return \$this;";
+            $methodDefs[] = "    }";
+            $methodDefs[] = "";
+
+            // getCollection()
+            $methodDefs[] = "    /** @return {$baseType}[] */";
             $methodDefs[] = "    public function get{$Stud}(): array";
             $methodDefs[] = "    {";
             $methodDefs[] = "        return \$this->{$prop};";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
         } else {
-            $methodDefs[] = "    public function get{$Stud}(): ?{$short}";
+            // single‐side getter
+            $methodDefs[] = "    public function get{$Stud}(): ?{$baseType}";
             $methodDefs[] = "    {";
             $methodDefs[] = "        return \$this->{$prop};";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
-            $methodDefs[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
+
+            // single‐side setter
+            $methodDefs[] = "    public function set{$Stud}(?{$baseType} \${$prop}): self";
             $methodDefs[] = "    {";
             $methodDefs[] = "        \$this->{$prop} = \${$prop};";
+            $methodDefs[] = "        return \$this;";
+            $methodDefs[] = "    }";
+            $methodDefs[] = "";
+
+            // remove/unset()
+            $methodDefs[] = "    public function remove{$Stud}(): self";
+            $methodDefs[] = "    {";
+            $methodDefs[] = "        \$this->{$prop} = null;";
             $methodDefs[] = "        return \$this;";
             $methodDefs[] = "    }";
             $methodDefs[] = "";
