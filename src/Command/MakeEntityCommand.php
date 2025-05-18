@@ -192,18 +192,46 @@ final class MakeEntityCommand extends Command
 
     /* ───────────── Fragment emitters ───────────── */
 
-    private function emitField(string $prop,string $db,array &$props,array &$meth): void
-    {
-        $type = $this->phpTypeMap[$db] ?? $db;  $Stud=ucfirst($prop);
+    /**
+     * Emit the fragments for a scalar field:
+     *  - the #[Field] attribute
+     *  - the private property
+     *  - the getter and setter methods
+     *
+     * @param string   $prop   The property name (e.g. “name”)
+     * @param string   $db     The DB type keyword (e.g. “string”, “json”)
+     * @param string[] &$props Accumulator for property‐definition lines
+     * @param string[] &$meth  Accumulator for method‐definition lines
+     */
+    private function emitField(
+        string $prop,
+        string $db,
+        array  &$props,
+        array  &$meth
+    ): void {
+        // Map DB type → PHP type (fallback to raw $db)
+        $type  = $this->phpTypeMap[$db] ?? $db;
+        $Stud  = ucfirst($prop);
 
-        $props[]="    #[Field(type: '$db')]";
-        $props[]="    private {$type} \${$prop};"; $props[]="";
+        // ─────────── property & attribute ───────────
+        $props[] = "    #[Field(type: '{$db}')]";
+        $props[] = "    private {$type} \${$prop};";
+        $props[] = "";
 
-        $meth[]="    public function get{$Stud}(): {$type}";
-        $meth[]="    { return \$this->{$prop}; }"; $meth[]="";
+        // ─────────── getter ───────────
+        $meth[]  = "    public function get{$Stud}(): {$type}";
+        $meth[]  = "    {";
+        $meth[]  = "        return \$this->{$prop};";
+        $meth[]  = "    }";
+        $meth[]  = "";
 
-        $meth[]="    public function set{$Stud}({$type} \${$prop}): self";
-        $meth[]="    { \$this->{$prop} = \${$prop}; return \$this; }"; $meth[]="";
+        // ─────────── setter ───────────
+        $meth[]  = "    public function set{$Stud}({$type} \${$prop}): self";
+        $meth[]  = "    {";
+        $meth[]  = "        \$this->{$prop} = \${$prop};";
+        $meth[]  = "        return \$this;";
+        $meth[]  = "    }";
+        $meth[]  = "";
     }
 
     /**
