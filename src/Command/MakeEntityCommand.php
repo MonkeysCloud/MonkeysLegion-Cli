@@ -94,7 +94,7 @@ final class MakeEntityCommand extends Command
         $this->line("[3] Finish & save");
         switch ($this->ask('Choose option 1-3')) {
             case '1': $this->wizardField($existingFields, $newFields); goto menu;
-            case '2': $this->wizardRelation($existingRels, $newRels);  goto menu;
+            case '2': $this->wizardRelation($existingRels, $newRels, $name);  goto menu;
             case '3': break;
             default : $this->error('Enter 1, 2 or 3');                 goto menu;
         }
@@ -145,7 +145,11 @@ final class MakeEntityCommand extends Command
         $out[$prop]=$type; $this->info("  ➕  $prop:$type added.");
     }
 
-    private function wizardRelation(array $existing, array &$out): void
+    private function wizardRelation(
+        array $existing,
+        array &$out,
+        string $selfClass
+    ): void
     {
         $kind = $this->chooseOption('relation', array_keys($this->relTypes));
         $attr = $this->relTypes[$kind];
@@ -173,7 +177,7 @@ final class MakeEntityCommand extends Command
                 $fqcn,                             // target entity FQCN
                 $inverseProp,                      // property over there
                 $invAttr,                          // its attribute kind
-                "App\\Entity\\$name",              // points back here
+                "App\\Entity\\$selfClass",             // points back here
                 $prop                              // ← other_prop for mappedBy/inversedBy
             );
         }
