@@ -222,6 +222,7 @@ final class MakeEntityCommand extends Command
         array  &$meth,
         ?string $otherProp = null
     ): void {
+        // get the short class name (e.g. “Project” from “App\Entity\Project”)
         $short  = substr($target, strrpos($target, '\\') + 1);
         $Stud   = ucfirst($prop);
         $many   = in_array($attr, ['OneToMany', 'ManyToMany'], true);
@@ -238,7 +239,7 @@ final class MakeEntityCommand extends Command
         // ─────────── property + attribute ───────────
         if ($many) {
             // doc-block always array
-            $props[] = "    /** @var array */";
+            $props[] = "    /** @var {$short}[] */";
             $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
             $props[] = "    private array \${$prop};";
             $ctor[]  = "        \$this->{$prop} = [];";
@@ -269,7 +270,7 @@ final class MakeEntityCommand extends Command
             $meth[] = "";
 
             // getter()
-            $meth[] = "    /** @return array */";
+            $meth[] = "    /** @return {$short}[] */";
             $meth[] = "    public function get{$Stud}(): array";
             $meth[] = "    {";
             $meth[] = "        return \$this->{$prop};";
