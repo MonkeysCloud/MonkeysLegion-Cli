@@ -222,20 +222,22 @@ final class MakeEntityCommand extends Command
         array  &$meth,
         ?string $otherProp = null
     ): void {
+        // short class name (e.g. “Project”)
         $short  = substr($target, strrpos($target, '\\') + 1);
-        $Stud   = ucfirst($prop);
+        // Studly‐case for method names (e.g. “Project” -> “Project”)
+        $Stud   = ucfirst($short);
         $many   = in_array($attr, ['OneToMany', 'ManyToMany'], true);
 
         // build mappedBy / inversedBy if we know the other side
         $extra = '';
         if ($attr === 'OneToMany' || ($attr === 'ManyToMany' && $otherProp)) {
-            $mapped = $otherProp ?: lcfirst($_SERVER['argv'][2] ?? 'self');
-            $extra  = ", mappedBy: '$mapped'";
+            $mapped = $otherProp ?: lcfirst($this->ask('…')) ;
+            $extra  = ", mappedBy: '{$mapped}'";
         } elseif (($attr === 'ManyToOne' || $attr === 'OneToOne' || $attr === 'ManyToMany') && $otherProp) {
-            $extra = ", inversedBy: '$otherProp'";
+            $extra  = ", inversedBy: '{$otherProp}'";
         }
 
-        // property + attribute
+        // ───── property + attribute ─────
         if ($many) {
             $props[] = "    /** @var {$short}[] */";
             $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
@@ -247,18 +249,18 @@ final class MakeEntityCommand extends Command
         }
         $props[] = "";
 
-        // methods
+        // ───── methods ─────
         if ($many) {
-            // add()
-            $meth[] = "    public function add{$short}({$short} \$item): self";
+            // addXxx()
+            $meth[] = "    public function add{$Stud}({$short} \$item): self";
             $meth[] = "    {";
             $meth[] = "        \$this->{$prop}[] = \$item;";
             $meth[] = "        return \$this;";
             $meth[] = "    }";
             $meth[] = "";
 
-            // remove()
-            $meth[] = "    public function remove{$short}({$short} \$item): self";
+            // removeXxx()
+            $meth[] = "    public function remove{$Stud}({$short} \$item): self";
             $meth[] = "    {";
             $meth[] = "        \$this->{$prop} = array_filter(";
             $meth[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
@@ -267,7 +269,7 @@ final class MakeEntityCommand extends Command
             $meth[] = "    }";
             $meth[] = "";
 
-            // getter()
+            // getXxxs()
             $meth[] = "    /** @return {$short}[] */";
             $meth[] = "    public function get{$Stud}(): array";
             $meth[] = "    {";
@@ -275,14 +277,14 @@ final class MakeEntityCommand extends Command
             $meth[] = "    }";
             $meth[] = "";
         } else {
-            // getter()
+            // getXxx()
             $meth[] = "    public function get{$Stud}(): ?{$short}";
             $meth[] = "    {";
             $meth[] = "        return \$this->{$prop};";
             $meth[] = "    }";
             $meth[] = "";
 
-            // setter()
+            // setXxx()
             $meth[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
             $meth[] = "    {";
             $meth[] = "        \$this->{$prop} = \${$prop};";
@@ -290,7 +292,7 @@ final class MakeEntityCommand extends Command
             $meth[] = "    }";
             $meth[] = "";
 
-            // unset/remove()
+            // removeXxx()
             $meth[] = "    public function remove{$Stud}(): self";
             $meth[] = "    {";
             $meth[] = "        \$this->{$prop} = null;";
@@ -300,10 +302,29 @@ final class MakeEntityCommand extends Command
         }
     }
 
-    /* ───────── inverse queue / patch ───────── */
-
-    private function queueInverse(string $fqcn,string $prop,string $attr,string $target,string $other): void
-    { $this->inverseQueue[$fqcn][]=['prop'=>$prop,'attr'=>$attr,'target'=>$target,'other_prop'=>$other]; }
+    /**
+     * Queue up an inverse‐side relation to be applied after our own file is written.
+     *
+     * @param string      $fqcn       Fully qualified class name of the target entity
+     * @param string      $prop       Property name on the target side
+     * @param string      $attr       Relation attribute on the target (OneToMany, etc.)
+     * @param string      $target     FQCN pointing back at our entity
+     * @param string|null $otherProp  Property name on this side for mappedBy/inversedBy
+     */
+    private function queueInverse(
+        string $fqcn,
+        string $prop,
+        string $attr,
+        string $target,
+        ?string $otherProp = null
+    ): void {
+        $this->inverseQueue[$fqcn][] = [
+            'prop'       => $prop,
+            'attr'       => $attr,
+            'target'     => $target,
+            'other_prop' => $otherProp,
+        ];
+    }
 
     private function applyInverseQueue(): void
     {
