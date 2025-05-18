@@ -11,7 +11,7 @@ final class MakeEntityCommand extends Command
 {
     /* ───────────────────────── Config ───────────────────────── */
 
-    /** @var string[] supported DB scalar types shown in the wizard */
+    /** @var string[] DB scalar types offered in the wizard */
     private array $fieldTypes = [
         'string','char','text','mediumText','longText',
         'integer','tinyInt','smallInt','bigInt','unsignedBigInt',
@@ -40,62 +40,53 @@ final class MakeEntityCommand extends Command
 
     /** DB type → PHP type */
     private array $phpTypeMap = [
-        /* text */    'string'=>'string','char'=>'string','text'=>'string',
+        /* text  */ 'string'=>'string','char'=>'string','text'=>'string',
         'mediumText'=>'string','longText'=>'string',
-
-        /* numeric */ 'integer'=>'int','tinyInt'=>'int','smallInt'=>'int','bigInt'=>'int',
+        /* nums  */ 'integer'=>'int','tinyInt'=>'int','smallInt'=>'int','bigInt'=>'int',
         'unsignedBigInt'=>'int','decimal'=>'float','float'=>'float','boolean'=>'bool','year'=>'int',
-
-        /* dates  */  'date'=>'\DateTimeImmutable','time'=>'\DateTimeImmutable',
-        'datetime'=>'\DateTimeImmutable','datetimetz'=>'\DateTimeImmutable',
-        'timestamp'=>'\DateTimeImmutable','timestamptz'=>'\DateTimeImmutable',
-
-        /* structured */ 'json'=>'array','simple_json'=>'array','array'=>'array',
-        'simple_array'=>'array','set'=>'array',
-
-        /* misc */ 'uuid'=>'string','binary'=>'string','enum'=>'string','geometry'=>'string',
-        'point'=>'string','linestring'=>'string','polygon'=>'string',
-        'ipAddress'=>'string','macAddress'=>'string',
+        /* date  */ 'date'=>'\DateTimeImmutable','time'=>'\DateTimeImmutable','datetime'=>'\DateTimeImmutable',
+        'datetimetz'=>'\DateTimeImmutable','timestamp'=>'\DateTimeImmutable','timestamptz'=>'\DateTimeImmutable',
+        /* json  */ 'json'=>'array','simple_json'=>'array','array'=>'array','simple_array'=>'array','set'=>'array',
+        /* misc  */ 'uuid'=>'string','binary'=>'string','enum'=>'string','geometry'=>'string','point'=>'string',
+        'linestring'=>'string','polygon'=>'string','ipAddress'=>'string','macAddress'=>'string',
     ];
 
-    /* runtime helpers */
-    private array $completions   = [];
-    private array $inverseQueue  = [];
+    /* helpers */
+    private array $completions  = [];
+    private array $inverseQueue = [];
 
-    /* ──────────────────────── Entry point ─────────────────────── */
+    /* ───────────────────────── Entry point ───────────────────────── */
 
     protected function handle(): int
     {
-        /* enable readline completion if ext-readline present */
         if (function_exists('readline_completion_function')) {
             readline_completion_function([$this,'readlineComplete']);
         }
 
-        /* 1. entity name */
+        /* 1️⃣  entity name */
         $name = $_SERVER['argv'][2] ?? $this->ask('Enter entity name (e.g. User)');
         if (!preg_match('/^[A-Z][A-Za-z0-9]+$/', $name)) {
-            return $this->fail('Invalid class name – must start with uppercase letter.');
+            return $this->fail('Invalid class name – must start with uppercase.');
         }
 
-        /* 2. ensure file exists */
+        /* 2️⃣  ensure file exists */
         $dir  = base_path('app/Entity');
-        $file = "{$dir}/{$name}.php";
+        $file = "$dir/$name.php";
         @mkdir($dir, 0755, true);
         if (!is_file($file)) {
             $this->createStub($name, $file);
             $this->info("✅  Created stub $file");
         }
 
-        /* 3. scan current props/relations */
+        /* 3️⃣  scan existing props */
         $src = file_get_contents($file);
-        preg_match_all('/#\[Field.+\$([A-Za-z0-9_]+)/', $src, $m);
-        $existingFields = $m[1] ?? [];
+        preg_match_all('/#\[Field.+\$([A-Za-z0-9_]+)/',                $src, $m); $existingFields = $m[1] ?? [];
         preg_match_all('/#\[(OneToOne|OneToMany|ManyToOne|ManyToMany).+\$([A-Za-z0-9_]+)/', $src, $m);
-        $existingRels   = $m[2] ?? [];
+        $existingRels = $m[2] ?? [];
 
         $newFields = $newRels = [];
 
-        /* 4. interactive wizard */
+        /* 4️⃣  wizard */
         menu:
         $this->info("\n===== Make Entity: $name =====");
         $this->line("[1] Add field");
@@ -105,57 +96,53 @@ final class MakeEntityCommand extends Command
             case '1': $this->wizardField($existingFields, $newFields); goto menu;
             case '2': $this->wizardRelation($existingRels, $newRels);  goto menu;
             case '3': break;
-            default : $this->error('Enter 1, 2 or 3');                  goto menu;
+            default : $this->error('Enter 1, 2 or 3');                 goto menu;
         }
-
         if (!$newFields && !$newRels) { $this->info('No changes.'); return self::SUCCESS; }
 
-        /* 5. build fragments --------------------------------------------- */
-        $propDefs = $ctorInits = $methodDefs = [];
-
+        /* 5️⃣  build fragments */
+        $props = $ctors = $methods = [];
         foreach ($newFields as $p => $t) {
-            $this->emitField($p, $t, $propDefs, $methodDefs);
+            $this->emitField($p, $t, $props, $methods);
         }
-        foreach ($newRels as $p => $meta) {
-            $this->emitRelation($p, $meta['attr'], $meta['target'], $propDefs, $ctorInits, $methodDefs);
+        foreach ($newRels as $p => $m) {
+            $this->emitRelation(
+                $p, $m['attr'], $m['target'],
+                $props, $ctors, $methods,
+                $m['other_prop'] ?? null
+            );
         }
 
-        /* 6. inject into class ------------------------------------------- */
+        /* 6️⃣  inject into file */
         $code = file_get_contents($file);
         if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
-            $body = "\n" . implode("\n", $propDefs) . $m['body'];
+            $body = "\n".implode("\n", $props).$m['body'];
 
-            /* constructor inits */
             $body = preg_replace(
                 '/(public function __construct\(\)\s*\{)/',
-                "$1\n" . implode("\n", $ctorInits),
+                "$1\n".implode("\n", $ctors),
                 $body
             );
 
-            /* append methods */
-            $body .= "\n" . implode("\n", $methodDefs) . "\n";
-
-            file_put_contents($file, $m['head'] . $body . $m['tail'] . "\n");
+            $body .= "\n".implode("\n", $methods)."\n";
+            file_put_contents($file, $m['head'].$body.$m['tail']."\n");
         }
         $this->info("✅  Updated $file");
 
-        /* 7. patch inverse sides */
+        /* 7️⃣  inverse patch */
         $this->applyInverseQueue();
-
         return self::SUCCESS;
     }
 
-    /* ─────────────────────── Wizards ─────────────────────── */
+    /* ───────────────────────── Wizards ───────────────────────── */
 
     private function wizardField(array $existing, array &$out): void
     {
-        $prop = $this->ask('  Field name (blank to cancel)');
-        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
-        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) { $this->error('Invalid name'); return; }
+        $prop = $this->ask('  Field name'); if ($prop===''||isset($existing[$prop])||isset($out[$prop])) return;
+        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/',$prop)) { $this->error('Invalid.'); return; }
 
-        $type      = $this->chooseOption('field', $this->fieldTypes);
-        $out[$prop]= $type;
-        $this->info("  ➕  $prop:$type added.");
+        $type = $this->chooseOption('field', $this->fieldTypes);
+        $out[$prop]=$type; $this->info("  ➕  $prop:$type added.");
     }
 
     private function wizardRelation(array $existing, array &$out): void
@@ -164,104 +151,159 @@ final class MakeEntityCommand extends Command
         $attr = $this->relTypes[$kind];
 
         /* target entity */
-        $entities = array_map(fn($f)=>basename($f,'.php'), glob(base_path('app/Entity').'/*.php'));
-        $this->completions = $entities;
+        $this->completions = array_map(fn($f)=>basename($f,'.php'),
+            glob(base_path('app/Entity').'/*.php'));
+        $target = $this->ask('  Target entity'); if ($target==='') return;
 
-        $target = $this->ask('  Target entity (short or FQCN)');
-        if ($target === '') return;
-        $short  = str_contains($target,'\\') ? substr($target,strrpos($target,'\\')+1) : $target;
-        $fqcn   = str_contains($target,'\\') ? $target : "App\\Entity\\$target";
+        $short = str_contains($target,'\\') ? substr($target,strrpos($target,'\\')+1) : $target;
+        $fqcn  = str_contains($target,'\\') ? $target : "App\\Entity\\$target";
 
-        /* property name suggestion */
-        $prop = $this->ask("  Property name [".($d = lcfirst($short).($attr==='OneToMany'||$attr==='ManyToMany'?'s':'')).']') ?: $d;
-        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
+        /* property name */
+        $suggest = lcfirst($short).($attr==='OneToMany'||$attr==='ManyToMany'?'s':'');
+        $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
+        if ($prop===''||isset($existing[$prop])||isset($out[$prop])) return;
 
-        /* queue inverse creation */
+        /* inverse side? */
+        $inverseProp = null;
         if (strtolower($this->ask('  Generate inverse side in target? [y/N]'))==='y') {
             $invAttr = $this->inverseMap[$attr];
-            $invProp = $this->ask("  Inverse property in $short [".
-                ($s = lcfirst($_SERVER['argv'][2] ?? 'self').($invAttr==='OneToMany'||$invAttr==='ManyToMany'?'s':'')).']') ?: $s;
-            $this->queueInverse($fqcn, $invProp, $invAttr, "App\\Entity\\".$_SERVER['argv'][2]);
+            $defName = lcfirst($_SERVER['argv'][2] ?? 'self').($invAttr==='OneToMany'||$invAttr==='ManyToMany'?'s':'');
+            $inverseProp = $this->ask("  Inverse property in $short [$defName]") ?: $defName;
+            $this->queueInverse(
+                $fqcn,                             // target entity FQCN
+                $inverseProp,                      // property over there
+                $invAttr,                          // its attribute kind
+                "App\\Entity\\$name",              // points back here
+                $prop                              // ← other_prop for mappedBy/inversedBy
+            );
         }
 
-        $out[$prop] = ['attr'=>$attr,'target'=>$fqcn];
+        $out[$prop] = [
+            'attr'       => $attr,
+            'target'     => $fqcn,
+            'other_prop' => $inverseProp        // may be null
+        ];
         $this->info("  ➕  $prop:$kind ➔ $fqcn");
     }
 
-    /* ─────────────────── Fragment emitters ─────────────────── */
+    /* ───────────── Fragment emitters ───────────── */
 
-    private function emitField(string $prop,string $db,array &$props,array &$methods): void
+    private function emitField(string $prop,string $db,array &$props,array &$meth): void
     {
-        $type = $this->phpTypeMap[$db] ?? $db;
-        $Stud = ucfirst($prop);
+        $type = $this->phpTypeMap[$db] ?? $db;  $Stud=ucfirst($prop);
 
-        $props[] = "    #[Field(type: '$db')]";
-        $props[] = "    private {$type} \${$prop};";
-        $props[] = "";
+        $props[]="    #[Field(type: '$db')]";
+        $props[]="    private {$type} \${$prop};"; $props[]="";
 
-        $methods[] = "    public function get{$Stud}(): {$type}";
-        $methods[] = "    { return \$this->{$prop}; }";
-        $methods[] = "";
+        $meth[]="    public function get{$Stud}(): {$type}";
+        $meth[]="    { return \$this->{$prop}; }"; $meth[]="";
 
-        $methods[] = "    public function set{$Stud}({$type} \${$prop}): self";
-        $methods[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
-        $methods[] = "";
+        $meth[]="    public function set{$Stud}({$type} \${$prop}): self";
+        $meth[]="    { \$this->{$prop} = \${$prop}; return \$this; }"; $meth[]="";
     }
 
-    /** central relation generator used by both sides */
+    /**
+     * Emit relation fragments.
+     *
+     * @param string      $prop       the property name
+     * @param string      $attr       the relation attribute (OneToOne, OneToMany…)
+     * @param string      $target     the FQCN of the target entity
+     * @param array       &$props     where to append the generated property lines
+     * @param array       &$ctor      where to append any constructor initializers
+     * @param array       &$meth      where to append the generated methods
+     * @param string|null $otherProp  property name on the opposite side (null if none)
+     */
     private function emitRelation(
-        string $prop,string $attr,string $target,
-        array &$props,array &$ctor,array &$methods
+        string $prop,
+        string $attr,
+        string $target,
+        array  &$props,
+        array  &$ctor,
+        array  &$meth,
+        ?string $otherProp = null
     ): void {
-        $short = substr($target,strrpos($target,'\\')+1);
-        $Stud  = ucfirst($prop);
-        $many  = in_array($attr,['OneToMany','ManyToMany'],true);
+        $short  = substr($target, strrpos($target, '\\') + 1);
+        $Stud   = ucfirst($prop);
+        $many   = in_array($attr, ['OneToMany', 'ManyToMany'], true);
 
+        // build mappedBy / inversedBy if we know the other side
+        $extra = '';
+        if ($attr === 'OneToMany' || ($attr === 'ManyToMany' && $otherProp)) {
+            $mapped = $otherProp ?: lcfirst($_SERVER['argv'][2] ?? 'self');
+            $extra  = ", mappedBy: '$mapped'";
+        } elseif (($attr === 'ManyToOne' || $attr === 'OneToOne' || $attr === 'ManyToMany') && $otherProp) {
+            $extra = ", inversedBy: '$otherProp'";
+        }
+
+        // property + attribute
         if ($many) {
             $props[] = "    /** @var {$short}[] */";
-            $props[] = "    #[{$attr}(targetEntity: {$short}::class)]";
+            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
             $props[] = "    private array \${$prop};";
-            $ctor [] = "        \$this->{$prop} = [];";
+            $ctor[]  = "        \$this->{$prop} = [];";
         } else {
-            $props[] = "    #[{$attr}(targetEntity: {$short}::class)]";
+            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
             $props[] = "    private ?{$short} \${$prop} = null;";
         }
         $props[] = "";
 
+        // methods
         if ($many) {
-            $methods[] = "    public function add{$short}({$short} \$item): self";
-            $methods[] = "    { \$this->{$prop}[] = \$item; return \$this; }";
-            $methods[] = "";
+            // add()
+            $meth[] = "    public function add{$short}({$short} \$item): self";
+            $meth[] = "    {";
+            $meth[] = "        \$this->{$prop}[] = \$item;";
+            $meth[] = "        return \$this;";
+            $meth[] = "    }";
+            $meth[] = "";
 
-            $methods[] = "    public function remove{$short}({$short} \$item): self";
-            $methods[] = "    { \$this->{$prop} = array_filter(";
-            $methods[] = "            \$this->{$prop}, fn(\$i)=>\$i!==\$item);";
-            $methods[] = "      return \$this; }";
-            $methods[] = "";
+            // remove()
+            $meth[] = "    public function remove{$short}({$short} \$item): self";
+            $meth[] = "    {";
+            $meth[] = "        \$this->{$prop} = array_filter(";
+            $meth[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
+            $meth[] = "        );";
+            $meth[] = "        return \$this;";
+            $meth[] = "    }";
+            $meth[] = "";
 
-            $methods[] = "    /** @return {$short}[] */";
-            $methods[] = "    public function get{$Stud}(): array";
-            $methods[] = "    { return \$this->{$prop}; }";
-            $methods[] = "";
+            // getter()
+            $meth[] = "    /** @return {$short}[] */";
+            $meth[] = "    public function get{$Stud}(): array";
+            $meth[] = "    {";
+            $meth[] = "        return \$this->{$prop};";
+            $meth[] = "    }";
+            $meth[] = "";
         } else {
-            $methods[] = "    public function get{$Stud}(): ?{$short}";
-            $methods[] = "    { return \$this->{$prop}; }";
-            $methods[] = "";
+            // getter()
+            $meth[] = "    public function get{$Stud}(): ?{$short}";
+            $meth[] = "    {";
+            $meth[] = "        return \$this->{$prop};";
+            $meth[] = "    }";
+            $meth[] = "";
 
-            $methods[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
-            $methods[] = "    { \$this->{$prop} = \${$prop}; return \$this; }";
-            $methods[] = "";
+            // setter()
+            $meth[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
+            $meth[] = "    {";
+            $meth[] = "        \$this->{$prop} = \${$prop};";
+            $meth[] = "        return \$this;";
+            $meth[] = "    }";
+            $meth[] = "";
 
-            $methods[] = "    public function remove{$Stud}(): self";
-            $methods[] = "    { \$this->{$prop} = null; return \$this; }";
-            $methods[] = "";
+            // unset/remove()
+            $meth[] = "    public function remove{$Stud}(): self";
+            $meth[] = "    {";
+            $meth[] = "        \$this->{$prop} = null;";
+            $meth[] = "        return \$this;";
+            $meth[] = "    }";
+            $meth[] = "";
         }
     }
 
-    /* ────────────── inverse-side queue & patching ────────────── */
+    /* ───────── inverse queue / patch ───────── */
 
-    private function queueInverse(string $fqcn,string $prop,string $attr,string $target): void
-    {   $this->inverseQueue[$fqcn][]=['prop'=>$prop,'attr'=>$attr,'target'=>$target]; }
+    private function queueInverse(string $fqcn,string $prop,string $attr,string $target,string $other): void
+    { $this->inverseQueue[$fqcn][]=['prop'=>$prop,'attr'=>$attr,'target'=>$target,'other_prop'=>$other]; }
 
     private function applyInverseQueue(): void
     {
@@ -274,7 +316,11 @@ final class MakeEntityCommand extends Command
 
             $props=$ctor=$meth=[];
             foreach ($defs as $d) {
-                $this->emitRelation($d['prop'],$d['attr'],$d['target'],$props,$ctor,$meth);
+                $this->emitRelation(
+                    $d['prop'],$d['attr'],$d['target'],
+                    $props,$ctor,$meth,
+                    $d['other_prop']
+                );
             }
 
             $body = "\n".implode("\n",$props).$m['body'];
@@ -291,7 +337,7 @@ final class MakeEntityCommand extends Command
         }
     }
 
-    /* ────────────────────────── Helpers ───────────────────────── */
+    /* ─────────────── Helpers ─────────────── */
 
     private function ask(string $q): string
     { return function_exists('readline') ? trim(readline("$q ")) : trim(fgets(STDIN)); }
