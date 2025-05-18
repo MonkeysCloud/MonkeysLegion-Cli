@@ -222,45 +222,44 @@ final class MakeEntityCommand extends Command
         array  &$meth,
         ?string $otherProp = null
     ): void {
-        // short class name (e.g. “Project”)
         $short  = substr($target, strrpos($target, '\\') + 1);
-        // Studly‐case for method names (e.g. “Project” -> “Project”)
-        $Stud   = ucfirst($short);
+        $Stud   = ucfirst($prop);
         $many   = in_array($attr, ['OneToMany', 'ManyToMany'], true);
 
         // build mappedBy / inversedBy if we know the other side
         $extra = '';
         if ($attr === 'OneToMany' || ($attr === 'ManyToMany' && $otherProp)) {
-            $mapped = $otherProp ?: lcfirst($this->ask('…')) ;
-            $extra  = ", mappedBy: '{$mapped}'";
+            $mapped = $otherProp ?: lcfirst($_SERVER['argv'][2] ?? 'self');
+            $extra  = ", mappedBy: '$mapped'";
         } elseif (($attr === 'ManyToOne' || $attr === 'OneToOne' || $attr === 'ManyToMany') && $otherProp) {
-            $extra  = ", inversedBy: '{$otherProp}'";
+            $extra = ", inversedBy: '$otherProp'";
         }
 
-        // ───── property + attribute ─────
+        // ─────────── property + attribute ───────────
         if ($many) {
-            $props[] = "    /** @var {$short}[] */";
-            $props[] = "    #[{$attr}(targetEntity: \\{$target}::class{$extra})]";
+            // doc-block always array
+            $props[] = "    /** @var array */";
+            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
             $props[] = "    private array \${$prop};";
             $ctor[]  = "        \$this->{$prop} = [];";
         } else {
-            $props[] = "    #[{$attr}(targetEntity: \\{$target}::class{$extra})]";
+            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
             $props[] = "    private ?{$short} \${$prop} = null;";
         }
         $props[] = "";
 
-        // ───── methods ─────
+        // ─────────── methods ───────────
         if ($many) {
-            // addXxx()
-            $meth[] = "    public function add{$Stud}({$short} \$item): self";
+            // add()
+            $meth[] = "    public function add{$short}({$short} \$item): self";
             $meth[] = "    {";
             $meth[] = "        \$this->{$prop}[] = \$item;";
             $meth[] = "        return \$this;";
             $meth[] = "    }";
             $meth[] = "";
 
-            // removeXxx()
-            $meth[] = "    public function remove{$Stud}({$short} \$item): self";
+            // remove()
+            $meth[] = "    public function remove{$short}({$short} \$item): self";
             $meth[] = "    {";
             $meth[] = "        \$this->{$prop} = array_filter(";
             $meth[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
@@ -269,22 +268,22 @@ final class MakeEntityCommand extends Command
             $meth[] = "    }";
             $meth[] = "";
 
-            // getXxxs()
-            $meth[] = "    /** @return {$short}[] */";
+            // getter()
+            $meth[] = "    /** @return array */";
             $meth[] = "    public function get{$Stud}(): array";
             $meth[] = "    {";
             $meth[] = "        return \$this->{$prop};";
             $meth[] = "    }";
             $meth[] = "";
         } else {
-            // getXxx()
+            // getter()
             $meth[] = "    public function get{$Stud}(): ?{$short}";
             $meth[] = "    {";
             $meth[] = "        return \$this->{$prop};";
             $meth[] = "    }";
             $meth[] = "";
 
-            // setXxx()
+            // setter()
             $meth[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
             $meth[] = "    {";
             $meth[] = "        \$this->{$prop} = \${$prop};";
@@ -292,7 +291,7 @@ final class MakeEntityCommand extends Command
             $meth[] = "    }";
             $meth[] = "";
 
-            // removeXxx()
+            // unset/remove()
             $meth[] = "    public function remove{$Stud}(): self";
             $meth[] = "    {";
             $meth[] = "        \$this->{$prop} = null;";
