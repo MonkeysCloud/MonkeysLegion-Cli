@@ -240,11 +240,11 @@ final class MakeEntityCommand extends Command
         // ───── property + attribute ─────
         if ($many) {
             $props[] = "    /** @var {$short}[] */";
-            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
+            $props[] = "    #[{$attr}(targetEntity: \\{$target}::class{$extra})]";
             $props[] = "    private array \${$prop};";
             $ctor[]  = "        \$this->{$prop} = [];";
         } else {
-            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
+            $props[] = "    #[{$attr}(targetEntity: \\{$target}::class{$extra})]";
             $props[] = "    private ?{$short} \${$prop} = null;";
         }
         $props[] = "";
