@@ -207,7 +207,7 @@ final class MakeEntityCommand extends Command
      *
      * @param string      $prop       the property name
      * @param string      $attr       the relation attribute (OneToOne, OneToMany…)
-     * @param string      $target     the FQCN of the target entity
+     * @param string      $target     the FQCN of the target entity (e.g. "App\Entity\Project")
      * @param array       &$props     where to append the generated property lines
      * @param array       &$ctor      where to append any constructor initializers
      * @param array       &$meth      where to append the generated methods
@@ -235,10 +235,10 @@ final class MakeEntityCommand extends Command
             $extra = ", inversedBy: '$otherProp'";
         }
 
-        // ─────────── property + attribute ───────────
+        // property + attribute
         if ($many) {
-            // doc-block always array
-            $props[] = "    /** @var array */";
+            $props[] = "    /** @var {$short}[] */";
+            // ← use full FQCN here:
             $props[] = "    #[{$attr}(targetEntity: \\{$target}::class{$extra})]";
             $props[] = "    private array \${$prop};";
             $ctor[]  = "        \$this->{$prop} = [];";
@@ -248,7 +248,7 @@ final class MakeEntityCommand extends Command
         }
         $props[] = "";
 
-        // ─────────── methods ───────────
+        // methods
         if ($many) {
             // add()
             $meth[] = "    public function add{$short}({$short} \$item): self";
@@ -269,7 +269,7 @@ final class MakeEntityCommand extends Command
             $meth[] = "";
 
             // getter()
-            $meth[] = "    /** @return array */";
+            $meth[] = "    /** @return {$short}[] */";
             $meth[] = "    public function get{$Stud}(): array";
             $meth[] = "    {";
             $meth[] = "        return \$this->{$prop};";
