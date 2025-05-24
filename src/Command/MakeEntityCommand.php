@@ -9,7 +9,6 @@ use MonkeysLegion\Cli\Console\Command;
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
 final class MakeEntityCommand extends Command
 {
-    /* ───────────────────────── Config ───────────────────────── */
 
     /** @var string[] DB scalar types offered in the wizard */
     private array $fieldTypes = [
@@ -55,8 +54,16 @@ final class MakeEntityCommand extends Command
     private array $completions  = [];
     private array $inverseQueue = [];
 
-    /* ───────────────────────── Entry point ───────────────────────── */
-
+    /**
+     * Handles the process of creating or updating an entity file.
+     *
+     * This method interacts with the user to define an entity name, ensures the file exists,
+     * and provides a wizard interface for adding fields and relationships to the entity.
+     * It also generates the necessary file fragments and injects them into the entity file,
+     * applying updates or creating a new file as needed.
+     *
+     * @return int Status code indicating success or failure.
+     */
     protected function handle(): int
     {
         if (function_exists('readline_completion_function')) {
@@ -76,6 +83,7 @@ final class MakeEntityCommand extends Command
         if (!is_file($file)) {
             $this->createStub($name, $file);
             $this->info("✅  Created stub $file");
+            $this->createRepoStub($name);
         }
 
         /* 3️⃣  scan existing props */
@@ -134,8 +142,12 @@ final class MakeEntityCommand extends Command
         return self::SUCCESS;
     }
 
-    /* ───────────────────────── Wizards ───────────────────────── */
-
+    /**
+     * Prompt the user for a field name and type.
+     *
+     * @param array $existing Existing properties to check against.
+     * @param array &$out      Output array to store the new property.
+     */
     private function wizardField(array $existing, array &$out): void
     {
         $prop = $this->ask('  Field name'); if ($prop===''||isset($existing[$prop])||isset($out[$prop])) return;
@@ -145,6 +157,13 @@ final class MakeEntityCommand extends Command
         $out[$prop]=$type; $this->info("  ➕  $prop:$type added.");
     }
 
+    /**
+     * Prompt the user for a relationship type and target entity.
+     *
+     * @param array $existing Existing properties to check against.
+     * @param array $out      Output array to store the new property.
+     * @param string $selfClass The name of the current class.
+     */
     private function wizardRelation(
         array $existing,
         array &$out,
@@ -358,6 +377,11 @@ final class MakeEntityCommand extends Command
         ];
     }
 
+    /**
+     * Apply the queued inverse relations to the target entity files.
+     *
+     * @return void
+     */
     private function applyInverseQueue(): void
     {
         foreach ($this->inverseQueue as $fqcn=>$defs) {
@@ -390,8 +414,13 @@ final class MakeEntityCommand extends Command
         }
     }
 
-    /* ─────────────── Helpers ─────────────── */
 
+    /**
+     * Prompts the user with a question and retrieves their input.
+     *
+     * @param string $q The question to prompt the user with.
+     * @return string The user's input after trimming whitespace.
+     */
     private function ask(string $q): string
     { return function_exists('readline') ? trim(readline("$q ")) : trim(fgets(STDIN)); }
 
@@ -434,5 +463,97 @@ class {$name}
 PHP);
     }
 
+    /**
+     * Create a stub file for the entity.
+     *
+     * @param string $msg
+     * @return int
+     */
     private function fail(string $msg): int { $this->error($msg); return self::FAILURE; }
+
+    /**
+     * Create a repository stub file for a given entity.
+     *
+     * @param string $entity The name of the entity for which the repository stub should be created.
+     *
+     * @return void
+     */
+    private function createRepoStub(string $entity): void
+    {
+        $dir  = base_path('app/Repository');
+        $file = "$dir/{$entity}Repository.php";
+        @mkdir($dir, 0755, true);
+
+        if (is_file($file)) {
+            $this->line("ℹ️  Repository already exists: $file");
+            return;
+        }
+
+        $table = $this->snake($entity) . 's';   // naive plural
+
+        $code = <<<PHP
+<?php
+declare(strict_types=1);
+
+namespace App\Repository;
+
+use MonkeysLegion\Repository\EntityRepository;
+use App\Entity\\{$entity};
+
+/**
+ * @extends EntityRepository<{$entity}>
+ */
+class {$entity}Repository extends EntityRepository
+{
+    protected string \$table       = '$table';
+    protected string \$entityClass = {$entity}::class;
+
+    /**
+     * Shortcut that keeps return type specific to {$entity}.
+     *
+     * @param array<string,mixed> \$criteria
+     * @return {$entity}[]
+     */
+    public function findAll(array \$criteria = []): array
+    {
+        /** @var {$entity}[] \$result */
+        \$result = parent::findAll(\$criteria);
+        return \$result;
+    }
+
+    /**
+     * Typed wrapper around parent::findOneBy().
+     *
+     * @param array<string,mixed> \$criteria
+     */
+    public function findOneBy(array \$criteria): ?{$entity}
+    {
+        /** @var ?{$entity} \$result */
+        \$result = parent::findOneBy(\$criteria);
+        return \$result;
+    }
+}
+PHP;
+
+        file_put_contents($file, $code);
+        $this->info("✅  Created stub $file");
+    }
+
+    /**
+     * Convert a class name to snake_case.
+     *
+     * This method takes a class name (e.g., "MyClassName") and converts it to snake_case (e.g., "my_class_name").
+     *
+     * @param string $class The class name to convert.
+     *
+     * @return string The converted class name.
+     *
+     */
+    private function snake(string $class): string
+    {
+        return strtolower(
+            preg_replace('/([a-z])([A-Z])/', '\$1_\$2', $class)
+        );
+    }
+    
 }
