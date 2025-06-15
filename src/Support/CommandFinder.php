@@ -3,33 +3,61 @@ declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Support;
 
+use Composer\Autoload\ClassLoader;
+use MonkeysLegion\Cli\Console\Command;
+
+/**
+ * Utility that finds every class extending Command and/or carrying #[Command].
+ */
 final class CommandFinder
 {
     /**
-     * @return class-string[]
+     * @return iterable<class-string<Command>>
      */
-    public static function all(string $baseDir, string $baseNs): array
+    public static function all(): iterable
     {
-        $len = \strlen($baseDir) + 1;
-        $cmd = [];
+        /** @var ClassLoader $loader */
+        $loader = require base_path('vendor/autoload.php');
 
-        foreach (new \RecursiveIteratorIterator(
-                     new \RecursiveDirectoryIterator($baseDir)
-                 ) as $file) {
+        /** @var array<string,string[]> $map prefix ⇒ [dir,…] */
+        $map = $loader->getPrefixesPsr4();
 
-            if (!$file->isFile() || $file->getExtension() !== 'php') continue;
+        foreach ($map as $ns => $dirs) {
+            foreach ($dirs as $dir) {
+                $cmdPath = $dir . '/Cli/Command';
+                if (!is_dir($cmdPath)) {
+                    continue;
+                }
+                foreach (
+                    new \RecursiveIteratorIterator(
+                        new \RecursiveDirectoryIterator($cmdPath)
+                    ) as $file
+                ) {
+                    if (
+                        $file->isFile()
+                        && $file->getExtension() === 'php'
+                    ) {
+                        require_once $file->getPathname();
 
-            $fqcn = $baseNs . '\\' .
-                    \str_replace('/', '\\',
-                        \substr($file->getPathname(), $len, -4)   // trim base & .php
-                    );
+                        $class = $ns
+                            . str_replace(
+                                '/',
+                                '\\',
+                                substr(
+                                    $file->getPathname(),
+                                    strlen($dir) + 1,
+                                    -4
+                                )
+                            );
 
-            // is_a() with autoload & allow-string = true
-            if (\is_subclass_of($fqcn, \MonkeysLegion\Cli\Console\Command::class, true)) {
-                $cmd[] = $fqcn;
+                        if (
+                            is_subclass_of($class, Command::class, true)
+                        ) {
+                            yield $class;
+                        }
+                    }
+                }
             }
         }
-
-        return $cmd;
     }
 }
