@@ -17,23 +17,26 @@ final class DatabaseMigrationCommand extends Command
     use Confirmable;
 
     public function __construct(
-        private Connection     $connection,
-        private EntityScanner  $scanner,
-        private MigrationGenerator $generator
+        private Connection        $connection,
+        private EntityScanner     $scanner,
+        private MigrationGenerator $generator,
     ) {
         parent::__construct();
     }
 
     protected function handle(): int
     {
+        // 1. Locate entities
         $entities = $this->scanner->scanDir(\base_path('app/Entity'));
 
-        $schema   = $this->connection->pdo()->query(
+        // 2. Read current DB schema
+        $schema = $this->connection->pdo()->query(
             'SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
                FROM information_schema.COLUMNS
               WHERE TABLE_SCHEMA = DATABASE()'
-        )->fetchAll(\PDO::FETCH_GROUP|\PDO::FETCH_UNIQUE);
+        )->fetchAll(\PDO::FETCH_GROUP | \PDO::FETCH_UNIQUE);
 
+        // 3. Generate diff SQL
         $sql = $this->generator->diff($entities, $schema);
 
         if ($sql === '') {
@@ -41,12 +44,17 @@ final class DatabaseMigrationCommand extends Command
             return self::SUCCESS;
         }
 
-        $file = \base_path('var/migrations/')
-            . date('Y_m_d_His') . '_auto.sql';
+        // 4. Ensure var/migrations directory exists
+        $dir = \base_path('var/migrations');
+        if (!\is_dir($dir) && !\mkdir($dir, 0o775, recursive: true) && !\is_dir($dir)) {
+            throw new \RuntimeException("Unable to create migrations directory: {$dir}");
+        }
 
+        // 5. Write a migration file
+        $file = $dir . '/' . date('Y_m_d_His') . '_auto.sql';
         \file_put_contents($file, $sql);
-        $this->info("Created migration: {$file}");
 
+        $this->info("Created migration: {$file}");
         return self::SUCCESS;
     }
 }
