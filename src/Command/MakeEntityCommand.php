@@ -234,7 +234,7 @@ final class MakeEntityCommand extends Command
 
         // ─────────── property & attribute ───────────
         $props[] = "    #[Field(type: '{$db}')]";
-        $props[] = "    private {$type} \${$prop};";
+        $props[] = "    public {$type} \${$prop};";
         $props[] = "";
 
         // ─────────── getter ───────────
@@ -292,11 +292,11 @@ final class MakeEntityCommand extends Command
             // doc-block always array
             $props[] = "    /** @var {$short}[] */";
             $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
-            $props[] = "    private array \${$prop};";
+            $props[] = "    public array \${$prop};";
             $ctor[]  = "        \$this->{$prop} = [];";
         } else {
             $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
-            $props[] = "    private ?{$short} \${$prop} = null;";
+            $props[] = "    public ?{$short} \${$prop} = null;";
         }
         $props[] = "";
 
