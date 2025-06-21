@@ -458,7 +458,7 @@ use MonkeysLegion\Entity\Attributes\ManyToMany;
 class {$name}
 {
 
-    #[Field(type: 'integer')]
+    #[Field(type: 'INT', primary: true, autoIncrement: true)]
     public int \$id;
     
     /**
