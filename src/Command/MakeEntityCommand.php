@@ -424,9 +424,23 @@ final class MakeEntityCommand extends Command
     private function ask(string $q): string
     { return function_exists('readline') ? trim(readline("$q ")) : trim(fgets(STDIN)); }
 
+    /**
+     * Displays a message to the user.
+     *
+     * @param string $in
+     * @param int $i
+     * @return array
+     */
     public function readlineComplete(string $in,int $i): array
     { return array_filter($this->completions,fn($o)=>str_starts_with($o,$in)); }
 
+    /**
+     * Displays an error message to the user.
+     *
+     * @param string $kind
+     * @param array $opts
+     * @return string
+     */
     private function chooseOption(string $kind,array $opts): string
     {
         foreach ($opts as $i=>$o) $this->line(sprintf("  [%2d] %s",$i+1,$o));
@@ -439,9 +453,18 @@ final class MakeEntityCommand extends Command
         }
     }
 
+    /**
+     * Create a stub file for a new entity.
+     *
+     * This method generates a basic PHP class file with the necessary attributes
+     * and a constructor, as well as a getter for the ID field.
+     *
+     * @param string $name The name of the entity class.
+     * @param string $file The path where the stub file should be created.
+     */
     private function createStub(string $name,string $file): void
     {
-        file_put_contents($file,<<<PHP
+        file_put_contents($file,<<<'PHP'
 <?php
 declare(strict_types=1);
 
