@@ -64,19 +64,21 @@ final class MigrateCommand extends Command
             try {
                 $sql = \file_get_contents($file);
 
-                // Some statements (DDL) trigger an implicit commit in MySQL.
-                // We still wrap everything so failures are caught consistently.
-                try {
-                    $pdo->exec($sql);
-                } catch (PDOException $e) {
-                    /* ------------------------------------------------------
-                     * Handle idempotent errors gracefully
-                     * 42S21 = duplicate column / field
-                     * 42S01 = table already exists
-                     * -----------------------------------------------------*/
-                    if (\in_array($e->getCode(), ['42S21', '42S01'], true)) {
-                        $this->line('Skipped (already applied): '.\basename($file));
-                    } else {
+                // Execute each SQL statement separately
+                $statements = preg_split('/;\s*(?=\n|\r|$)/', trim($sql));
+                foreach ($statements as $stmt) {
+                    $stmt = trim($stmt);
+                    if ($stmt === '') {
+                        continue;
+                    }
+                    try {
+                        $pdo->exec($stmt);
+                    } catch (PDOException $e) {
+                        // Skip duplicate‐column or table‐exists errors
+                        if (in_array($e->getCode(), ['42S21', '42S01'], true)) {
+                            $this->line('Skipped (already applied statement): '.substr($stmt, 0, 50).'…');
+                            continue;
+                        }
                         throw $e;
                     }
                 }
