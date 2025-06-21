@@ -457,6 +457,10 @@ use MonkeysLegion\Entity\Attributes\ManyToMany;
 #[Entity]
 class {$name}
 {
+
+    #[Field(type: 'integer')]
+    public int \$id;
+    
     public function __construct()
     {
     }
