@@ -464,7 +464,7 @@ final class MakeEntityCommand extends Command
      */
     private function createStub(string $name,string $file): void
     {
-        file_put_contents($file,<<<'PHP'
+        $template = <<<PHP
 <?php
 declare(strict_types=1);
 
@@ -480,31 +480,22 @@ use MonkeysLegion\Entity\Attributes\ManyToMany;
 #[Entity]
 class {$name}
 {
-
     #[Field(type: 'INT', primary: true, autoIncrement: true)]
     public int \$id;
-    
-    /**
-     * Constructor for the {$name} entity.
-     *
-     * Initializes the entity with default values.
-     */
+
     public function __construct()
     {
     }
-    
-    /**
-     * Get the ID of the entity.
-     *
-     * @return int The ID of the entity.
-     */
+
     public function getId(): int
     {
         return \$this->id;
     }
 }
 
-PHP);
+PHP;
+
+        file_put_contents($file, $template);
     }
 
     /**
