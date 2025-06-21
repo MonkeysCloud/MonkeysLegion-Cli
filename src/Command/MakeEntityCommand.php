@@ -524,7 +524,7 @@ PHP;
             return;
         }
 
-        $table = $this->snake($entity) . 's';   // naive plural
+        $table = $this->snake($entity);
 
         $code = <<<PHP
 <?php
