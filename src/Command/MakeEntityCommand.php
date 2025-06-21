@@ -461,8 +461,23 @@ class {$name}
     #[Field(type: 'integer')]
     public int \$id;
     
+    /**
+     * Constructor for the {$name} entity.
+     *
+     * Initializes the entity with default values.
+     */
     public function __construct()
     {
+    }
+    
+    /**
+     * Get the ID of the entity.
+     *
+     * @return int The ID of the entity.
+     */
+    public function getId(): int
+    {
+        return \$this->id;
     }
 }
 
