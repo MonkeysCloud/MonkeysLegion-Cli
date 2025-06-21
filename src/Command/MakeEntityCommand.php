@@ -480,7 +480,7 @@ use MonkeysLegion\Entity\Attributes\ManyToMany;
 #[Entity]
 class {$name}
 {
-    #[Field(type: 'INT', primary: true, autoIncrement: true)]
+    #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
     public int \$id;
 
     public function __construct()
