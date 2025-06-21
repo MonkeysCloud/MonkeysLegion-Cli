@@ -75,9 +75,9 @@ final class MigrateCommand extends Command
                      * 42S01 = table already exists
                      * -----------------------------------------------------*/
                     if (\in_array($e->getCode(), ['42S21', '42S01'], true)) {
-                        $this->warn('Skipped (already applied): '.\basename($file));
+                        $this->line('Skipped (already applied): '.\basename($file));
                     } else {
-                        throw $e; // real failure → bubble up to outer catch
+                        throw $e;
                     }
                 }
 
