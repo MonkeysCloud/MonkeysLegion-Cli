@@ -1,6 +1,9 @@
 #!/usr/bin/env php
 <?php
+
 declare(strict_types=1);
+
+use MonkeysLegion\Framework\HttpBootstrap;
 
 /**
  * MonkeysLegion CLI entry point (vendor/bin/ml or skeleton/bin/ml).
@@ -32,13 +35,10 @@ if (! file_exists($configFile)) {
     exit(1);
 }
 
-// Pass the returned array into addDefinitions()
-$definitions = require $configFile;
-$container   = (new MonkeysLegion\DI\ContainerBuilder())
-    ->addDefinitions($definitions)
-    ->build();
 
 // 3) Bootstrap and run the CLI kernel
+$container   = HttpBootstrap::buildContainer(base_path());
+
 /** @var MonkeysLegion\Cli\CliKernel $kernel */
 $kernel = $container->get(MonkeysLegion\Cli\CliKernel::class);
 exit($kernel->run($argv));
