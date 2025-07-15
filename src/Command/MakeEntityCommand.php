@@ -218,24 +218,33 @@ final class MakeEntityCommand extends Command
 
         /* inverse side? */
         $inverseProp = null;
-        if (strtolower($this->ask('  Generate inverse side in target? [y/N]'))==='y') {
+        if (strtolower($this->ask('  Generate inverse side in target? [y/N]')) === 'y') {
             $invAttr = $this->inverseMap[$attr];
-            $defName = lcfirst($_SERVER['argv'][2] ?? 'self').($invAttr==='OneToMany'||$invAttr==='ManyToMany'?'s':'');
-            $inverseProp = $this->ask("  Inverse property in $short [$defName]") ?: $defName;
+            $base = lcfirst($selfClass);
+            if (in_array($invAttr, ['OneToMany','ManyToMany'], true)) {
+                // proper plural, e.g. “companies”
+                $defName = $this->inflector->pluralize($base);
+            } else {
+                // singular
+                $defName = $base;
+            }
+
+            $inverseProp = $this->ask("  Inverse property in $short [{$defName}]") ?: $defName;
             $this->queueInverse(
-                $fqcn,                             // target entity FQCN
-                $inverseProp,                      // property over there
-                $invAttr,                          // its attribute kind
-                "App\\Entity\\$selfClass",             // points back here
-                $prop                              // ← other_prop for mappedBy/inversedBy
+                $fqcn,
+                $inverseProp,
+                $invAttr,
+                "App\\Entity\\$selfClass",
+                $prop
             );
         }
 
         $out[$prop] = [
             'attr'       => $attr,
             'target'     => $fqcn,
-            'other_prop' => $inverseProp        // may be null
+            'other_prop' => $inverseProp
         ];
+
         $this->info("  ➕  $prop:$kind ➔ $fqcn");
     }
 
