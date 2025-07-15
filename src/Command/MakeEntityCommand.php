@@ -439,7 +439,20 @@ final class MakeEntityCommand extends Command
                 );
             }
 
-            $body = "\n".implode("\n",$props).$m['body'];
+            // start with the existing body
+            $body = $m['body'];
+
+            // inject props just before the constructor
+            if(!empty($props)){
+                $propsBlock = "\n" . implode("\n", $props) . "\n";
+                $body = preg_replace(
+                    '/(?=\s*public function __construct\(\))/m',
+                    $propsBlock,
+                    $body,
+                    1
+                );
+            }
+
             $body = preg_replace('/(public function __construct\(\)\s*\{)/',
                 "$1\n".implode("\n",$ctor),$body,1,$ok);
             if(!$ok && $ctor){
