@@ -124,16 +124,34 @@ final class MakeEntityCommand extends Command
         /* 6️⃣  inject into file */
         $code = file_get_contents($file);
         if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
-            $body = "\n".implode("\n", $props).$m['body'];
+            $body = $m['body'];
 
-            $body = preg_replace(
-                '/(public function __construct\(\)\s*\{)/',
-                "$1\n".implode("\n", $ctors),
-                $body
-            );
+            // 1️⃣ Insert new properties just before the constructor
+            if (!empty($props)) {
+                $propsBlock = "\n" . implode("\n", $props) . "\n";
+                $body = preg_replace(
+                    '/(?=\s*public function __construct\(\))/',
+                    $propsBlock,
+                    $body,
+                    1
+                );
+            }
 
-            $body .= "\n".implode("\n", $methods)."\n";
-            file_put_contents($file, $m['head'].$body.$m['tail']."\n");
+            // 2️⃣ Now patch the constructor itself
+            if (!empty($ctors)) {
+                $body = preg_replace(
+                    '/(public function __construct\(\)\s*\{)/',
+                    "$1\n" . implode("\n", $ctors),
+                    $body
+                );
+            }
+
+            // 3️⃣ Finally append all new methods at the bottom
+            if (!empty($methods)) {
+                $body .= "\n" . implode("\n", $methods) . "\n";
+            }
+
+            file_put_contents($file, $m['head'] . $body . $m['tail'] . "\n");
         }
         $this->info("✅  Updated $file");
 
