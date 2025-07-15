@@ -5,6 +5,7 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
+use MonkeysLegion\Entity\Attributes\JoinTable;
 use Doctrine\Inflector\Inflector;
 use Doctrine\Inflector\InflectorFactory;
 
@@ -124,7 +125,8 @@ final class MakeEntityCommand extends Command
             $this->emitRelation(
                 $p, $m['attr'], $m['target'],
                 $props, $ctors, $methods,
-                $m['other_prop'] ?? null
+                $m['other_prop'] ?? null,
+                $m['joinTable'] ?? null
             );
         }
 
@@ -205,13 +207,30 @@ final class MakeEntityCommand extends Command
 
         $short = str_contains($target,'\\') ? substr($target,strrpos($target,'\\')+1) : $target;
         $fqcn  = str_contains($target,'\\') ? $target : "App\\Entity\\$target";
-
+        $joinTable = null;
         /* property name */
-        if (in_array($attr, ['OneToMany','ManyToMany'], true)) {
-            // pluralize properly—“companies”, not “companys”
-            $suggest = lcfirst($this->inflector->pluralize($short));
-        } else {
-            $suggest = lcfirst($short);
+        if ($attr === 'ManyToMany') {
+            // default to owning-sided ManyToMany
+            $owning = true;
+            // default prop name
+            $suggest = lcfirst($owning
+                ? $this->inflector->pluralize($short)
+                : $short
+            );
+            if ($owning) {
+                // default table name: alphabetical snake
+                [$a, $b] = [lcfirst($selfClass), lcfirst($short)];
+                // build array, then sort it by reference
+                $arr = [$this->snake($a), $this->snake($b)];
+                sort($arr);
+                $default = implode('_', $arr);
+
+                $tbl  = $this->ask("  Join table name [$default]") ?: $default;
+                $colA = $this->ask("  Column for {$selfClass} [{$arr[0]}_id]")  ?: "{$arr[0]}_id";
+                $colB = $this->ask("  Column for {$short} [{$arr[1]}_id]")      ?: "{$arr[1]}_id";
+                $joinTable = new JoinTable(name: $tbl, joinColumn: $colA, inverseColumn: $colB);
+            }
+
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
         if ($prop===''||isset($existing[$prop])||isset($out[$prop])) return;
@@ -242,7 +261,8 @@ final class MakeEntityCommand extends Command
         $out[$prop] = [
             'attr'       => $attr,
             'target'     => $fqcn,
-            'other_prop' => $inverseProp
+            'other_prop' => $inverseProp,
+            'joinTable'  => $joinTable
         ];
 
         $this->info("  ➕  $prop:$kind ➔ $fqcn");
@@ -310,7 +330,8 @@ final class MakeEntityCommand extends Command
         array  &$props,
         array  &$ctor,
         array  &$meth,
-        ?string $otherProp = null
+        ?string $otherProp = null,
+        ?JoinTable $joinTable = null
     ): void {
         // get the short class name (e.g. “Project” from “App\Entity\Project”)
         $short  = substr($target, strrpos($target, '\\') + 1);
@@ -338,6 +359,37 @@ final class MakeEntityCommand extends Command
             $props[] = "    public ?{$short} \${$prop} = null;";
         }
         $props[] = "";
+
+        // ─────────── property + attribute ───────────
+        // Build the attribute args dynamically
+        $args = ["targetEntity: {$short}::class"];
+        // mappedBy or inversedBy
+        if ($otherProp) {
+            if (in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
+                $args[] = "mappedBy: '{$otherProp}'";
+            } elseif (in_array($attr, ['ManyToOne', 'OneToOne'], true)) {
+                $args[] = "inversedBy: '{$otherProp}'";
+            }
+        }
+        // joinTable on owning ManyToMany
+        if ($attr === 'ManyToMany' && $joinTable) {
+            $jt = $joinTable;
+            $args[] = "joinTable: new JoinTable(name: '{$jt->name}', joinColumn: '{$jt->joinColumn}', inverseColumn: '{$jt->inverseColumn}')";
+        }
+
+        if ($many) {
+            $props[] = "    /** @var {$short}[] */";
+        }
+        $props[] = '    #[' . $attr . '(' . implode(', ', $args) . ')]';
+        $props[] = $many
+            ? "    public array \${$prop};"
+            : "    public ?{$short} \${$prop} = null;";
+        $props[] = "";
+
+        // init in constructor for collections
+        if ($many) {
+            $ctor[] = "        \$this->{$prop} = [];";
+        }
 
         // ─────────── methods ───────────
         if ($many) {
@@ -435,7 +487,8 @@ final class MakeEntityCommand extends Command
                 $this->emitRelation(
                     $d['prop'],$d['attr'],$d['target'],
                     $props,$ctor,$meth,
-                    $d['other_prop']
+                    $d['other_prop'],
+                    $d['joinTable'] ?? null
                 );
             }
 
