@@ -58,10 +58,29 @@ final class SchemaUpdateCommand extends Command
 
         // 5) Apply if forced
         if ($force) {
-            $this->db->pdo()->exec($sql);
-            $this->info('✅  Schema updated successfully.');
-        } elseif (! $dump) {
-            $this->info('ℹ️  No action taken. Use `--dump` to preview or `--force` to apply.');
+            $pdo = $this->db->pdo();
+            $pdo->beginTransaction();
+
+            try {
+                // split on semicolon followed by line-break or EOS
+                $stmts = preg_split('/;\\s*(?=\\R|$)/', trim($sql));
+                foreach ($stmts as $stmt) {
+                    $stmt = trim($stmt);
+                    if ($stmt === '') {
+                        continue;
+                    }
+                    $pdo->exec($stmt);
+                }
+
+                $pdo->commit();
+                $this->info('✅  Schema updated successfully.');
+            } catch (\PDOException $e) {
+                $pdo->rollBack();
+                $this->error('❌  Failed: ' . $e->getMessage());
+                return self::FAILURE;
+            }
+        } elseif (!$dump) {
+            $this->info('ℹ️  No action taken. Use --dump to preview or --force to apply.');
         }
 
         return self::SUCCESS;
