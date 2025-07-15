@@ -126,18 +126,18 @@ final class MakeEntityCommand extends Command
         if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
             $body = $m['body'];
 
-            // 1️⃣ Insert new properties just before the constructor
+            // Insert exactly one blank line + your props + one trailing newline
             if (!empty($props)) {
                 $propsBlock = "\n" . implode("\n", $props) . "\n";
                 $body = preg_replace(
-                    '/(?=\s*public function __construct\(\))/',
+                    '/(?=\s*public function __construct\(\))/m',
                     $propsBlock,
                     $body,
                     1
                 );
             }
 
-            // 2️⃣ Now patch the constructor itself
+            // Then patch constructor
             if (!empty($ctors)) {
                 $body = preg_replace(
                     '/(public function __construct\(\)\s*\{)/',
@@ -146,7 +146,7 @@ final class MakeEntityCommand extends Command
                 );
             }
 
-            // 3️⃣ Finally append all new methods at the bottom
+            // Finally append your methods
             if (!empty($methods)) {
                 $body .= "\n" . implode("\n", $methods) . "\n";
             }
