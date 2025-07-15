@@ -5,6 +5,8 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
+use Doctrine\Inflector\Inflector;
+use Doctrine\Inflector\InflectorFactory;
 
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
 final class MakeEntityCommand extends Command
@@ -54,6 +56,9 @@ final class MakeEntityCommand extends Command
     private array $completions  = [];
     private array $inverseQueue = [];
 
+    /** @var Inflector */
+    private Inflector $inflector;
+
     /**
      * Handles the process of creating or updating an entity file.
      *
@@ -69,6 +74,8 @@ final class MakeEntityCommand extends Command
         if (function_exists('readline_completion_function')) {
             readline_completion_function([$this,'readlineComplete']);
         }
+
+        $this->inflector = InflectorFactory::create()->build();
 
         /* 1️⃣  entity name */
         $name = $_SERVER['argv'][2] ?? $this->ask('Enter entity name (e.g. User)');
@@ -200,7 +207,12 @@ final class MakeEntityCommand extends Command
         $fqcn  = str_contains($target,'\\') ? $target : "App\\Entity\\$target";
 
         /* property name */
-        $suggest = lcfirst($short).($attr==='OneToMany'||$attr==='ManyToMany'?'s':'');
+        if (in_array($attr, ['OneToMany','ManyToMany'], true)) {
+            // pluralize properly—“companies”, not “companys”
+            $suggest = lcfirst($this->inflector->pluralize($short));
+        } else {
+            $suggest = lcfirst($short);
+        }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
         if ($prop===''||isset($existing[$prop])||isset($out[$prop])) return;
 
