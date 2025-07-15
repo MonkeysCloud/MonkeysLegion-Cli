@@ -348,19 +348,6 @@ final class MakeEntityCommand extends Command
         }
 
         // ─────────── property + attribute ───────────
-        if ($many) {
-            // doc-block always array
-            $props[] = "    /** @var {$short}[] */";
-            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
-            $props[] = "    public array \${$prop};";
-            $ctor[]  = "        \$this->{$prop} = [];";
-        } else {
-            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
-            $props[] = "    public ?{$short} \${$prop} = null;";
-        }
-        $props[] = "";
-
-        // ─────────── property + attribute ───────────
         // Build the attribute args dynamically
         $args = ["targetEntity: {$short}::class"];
         // mappedBy or inversedBy
