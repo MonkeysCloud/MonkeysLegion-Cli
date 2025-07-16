@@ -486,7 +486,6 @@ final class MakeEntityCommand extends Command
             $props = $ctor = $meth = [];
 
             foreach ($defs as $d) {
-                $already = $this->hasProperty($body, $d['prop']);   // 👈 NEW
                 $this->emitRelation(
                     $d['prop'],
                     $d['attr'],
@@ -693,12 +692,6 @@ PHP;
     private function hasProperty(string $body, string $prop): bool
     {
         return (bool) preg_match('/public\s+(?:\?\w+|array)\s+\$' . preg_quote($prop, '/') . '\b/', $body);
-    }
-
-    /** Does $body already contain `function <name>(` ? */
-    private function hasMethod(string $body, string $name): bool
-    {
-        return (bool) preg_match('/function\s+' . preg_quote($name, '/') . '\s*\(/', $body);
     }
 
     /**
