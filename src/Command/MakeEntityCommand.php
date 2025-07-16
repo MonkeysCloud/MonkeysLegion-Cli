@@ -260,7 +260,6 @@ final class MakeEntityCommand extends Command
                 $invAttr,
                 "App\\Entity\\$selfClass",
                 $prop,
-                $attr === 'OneToOne'
             );
         }
 
@@ -451,19 +450,17 @@ final class MakeEntityCommand extends Command
      * @param string|null $otherProp  Property name on this side for mappedBy/inversedBy
      */
     private function queueInverse(
-        string $fqcn,
-        string $prop,
-        string $attr,
-        string $target,
-        ?string $otherProp = null,
-        bool $isInverseOneToOne = false
+        string  $fqcn,
+        string  $prop,
+        string  $attr,
+        string  $target,
+        ?string $otherProp = null           // ← unchanged
     ): void {
         $this->inverseQueue[$fqcn][] = [
             'prop'       => $prop,
             'attr'       => $attr,
             'target'     => $target,
             'other_prop' => $otherProp,
-            'inverse_o2o' => $isInverseOneToOne,
         ];
     }
 
@@ -474,21 +471,32 @@ final class MakeEntityCommand extends Command
      */
     private function applyInverseQueue(): void
     {
-        foreach ($this->inverseQueue as $fqcn=>$defs) {
-            $file = base_path('app/Entity/'.substr($fqcn,strrpos($fqcn,'\\')+1).'.php');
-            if (!is_file($file)) $this->createStub(substr($fqcn,strrpos($fqcn,'\\')+1),$file);
+        foreach ($this->inverseQueue as $fqcn => $defs) {
+            $file = base_path('app/Entity/' . substr($fqcn, strrpos($fqcn, '\\') + 1) . '.php');
+            if (!is_file($file)) {
+                $this->createStub(substr($fqcn, strrpos($fqcn, '\\') + 1), $file);
+            }
 
             $code = file_get_contents($file);
-            if (!preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s',$code,$m)) continue;
+            if (!preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
+                continue;
+            }
 
-            $props=$ctor=$meth=[];
+            $body  = $m['body'];
+            $props = $ctor = $meth = [];
+
             foreach ($defs as $d) {
+                $already = $this->hasProperty($body, $d['prop']);   // 👈 NEW
                 $this->emitRelation(
-                    $d['prop'],$d['attr'],$d['target'],
-                    $props,$ctor,$meth,
+                    $d['prop'],
+                    $d['attr'],
+                    $d['target'],
+                    $props,
+                    $ctor,
+                    $meth,
                     $d['other_prop'],
                     $d['joinTable'] ?? null,
-                    $d['inverse_o2o'] ?? false
+                    $already                    // only skip if it’s really there
                 );
             }
 
