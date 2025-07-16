@@ -126,7 +126,8 @@ final class MakeEntityCommand extends Command
                 $p, $m['attr'], $m['target'],
                 $props, $ctors, $methods,
                 $m['other_prop'] ?? null,
-                $m['joinTable'] ?? null
+                $m['joinTable'] ?? null,
+                $this->hasProperty($code ?? '', $p)
             );
         }
 
@@ -322,6 +323,8 @@ final class MakeEntityCommand extends Command
      * @param array       &$ctor      where to append any constructor initializers
      * @param array       &$meth      where to append the generated methods
      * @param string|null $otherProp  property name on the opposite side (null if none)
+     * @param JoinTable|null $joinTable  the join table definition (if ManyToMany)
+     * @param bool       $skipProperty whether to skip emitting the property itself
      */
     private function emitRelation(
         string $prop,
@@ -331,26 +334,17 @@ final class MakeEntityCommand extends Command
         array  &$ctor,
         array  &$meth,
         ?string $otherProp = null,
-        ?JoinTable $joinTable = null
+        ?JoinTable $joinTable = null,
+        bool $skipProperty = false
     ): void {
-        // get the short class name (e.g. “Project” from “App\Entity\Project”)
-        $short  = substr($target, strrpos($target, '\\') + 1);
-        $Stud   = ucfirst($prop);
-        $many   = in_array($attr, ['OneToMany', 'ManyToMany'], true);
+        // short class name (“Project” from “App\Entity\Project”)
+        $short = substr($target, strrpos($target, '\\') + 1);
+        $Stud  = ucfirst($prop);
+        $many  = in_array($attr, ['OneToMany', 'ManyToMany'], true);
 
-        // build mappedBy / inversedBy if we know the other side
-        $extra = '';
-        if ($attr === 'OneToMany' || ($attr === 'ManyToMany' && $otherProp)) {
-            $mapped = $otherProp ?: lcfirst($_SERVER['argv'][2] ?? 'self');
-            $extra  = ", mappedBy: '$mapped'";
-        } elseif (($attr === 'ManyToOne' || $attr === 'OneToOne' || $attr === 'ManyToMany') && $otherProp) {
-            $extra = ", inversedBy: '$otherProp'";
-        }
-
-        // ─────────── property + attribute ───────────
-        // Build the attribute args dynamically
+        /* ───── build attribute arguments ───── */
         $args = ["targetEntity: {$short}::class"];
-        // mappedBy or inversedBy
+
         if ($otherProp) {
             if (in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
                 $args[] = "mappedBy: '{$otherProp}'";
@@ -358,27 +352,31 @@ final class MakeEntityCommand extends Command
                 $args[] = "inversedBy: '{$otherProp}'";
             }
         }
-        // joinTable on owning ManyToMany
+
         if ($attr === 'ManyToMany' && $joinTable) {
-            $jt = $joinTable;
-            $args[] = "joinTable: new JoinTable(name: '{$jt->name}', joinColumn: '{$jt->joinColumn}', inverseColumn: '{$jt->inverseColumn}')";
+            $jt     = $joinTable;
+            $args[] = "joinTable: new JoinTable(name: '{$jt->name}', "
+                . "joinColumn: '{$jt->joinColumn}', "
+                . "inverseColumn: '{$jt->inverseColumn}')";
         }
 
-        if ($many) {
-            $props[] = "    /** @var {$short}[] */";
-        }
-        $props[] = '    #[' . $attr . '(' . implode(', ', $args) . ')]';
-        $props[] = $many
-            ? "    public array \${$prop};"
-            : "    public ?{$short} \${$prop} = null;";
-        $props[] = "";
+        /* ───── property + constructor (only if not skipped) ───── */
+        if (!$skipProperty) {
+            if ($many) {
+                $props[] = "    /** @var {$short}[] */";
+            }
+            $props[] = '    #[' . $attr . '(' . implode(', ', $args) . ')]';
+            $props[] = $many
+                ? "    public array \${$prop};"
+                : "    public ?{$short} \${$prop} = null;";
+            $props[] = "";
 
-        // init in constructor for collections
-        if ($many) {
-            $ctor[] = "        \$this->{$prop} = [];";
+            if ($many) {            // initialise collection
+                $ctor[] = "        \$this->{$prop} = [];";
+            }
         }
 
-        // ─────────── methods ───────────
+        /* ───── methods (always emitted – duplicates filtered earlier) ───── */
         if ($many) {
             // add()
             $meth[] = "    public function add{$short}({$short} \$item): self";
@@ -665,6 +663,18 @@ PHP;
 
         file_put_contents($file, $code);
         $this->info("✅  Created stub $file");
+    }
+
+    /** Does $body already contain `public … $prop`? */
+    private function hasProperty(string $body, string $prop): bool
+    {
+        return (bool) preg_match('/public\s+(?:\?\w+|array)\s+\$' . preg_quote($prop, '/') . '\b/', $body);
+    }
+
+    /** Does $body already contain `function <name>(` ? */
+    private function hasMethod(string $body, string $name): bool
+    {
+        return (bool) preg_match('/function\s+' . preg_quote($name, '/') . '\s*\(/', $body);
     }
 
     /**
