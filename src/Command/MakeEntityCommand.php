@@ -260,6 +260,7 @@ final class MakeEntityCommand extends Command
                 $invAttr,
                 "App\\Entity\\$selfClass",
                 $prop,
+                $attr === 'OneToOne',
             );
         }
 
@@ -339,7 +340,8 @@ final class MakeEntityCommand extends Command
         array  &$meth,
         ?string $otherProp = null,
         ?JoinTable $joinTable = null,
-        bool $skipProperty = false
+        bool $skipProperty = false,
+        bool $inverseO2O = false
     ): void {
         // short class name (“Project” from “App\Entity\Project”)
         $short = substr($target, strrpos($target, '\\') + 1);
@@ -350,17 +352,13 @@ final class MakeEntityCommand extends Command
         $args = ["targetEntity: {$short}::class"];
 
         /* ①  special-case: inverse side of One-to-One  */
-        if ($attr === 'OneToOne' && $skipProperty && $otherProp) {
-            // This is the *inverse* side – it should point back with mappedBy
+        if ($attr === 'OneToOne' && $inverseO2O && $otherProp) {
+            // explicit inverse side ⇒ mappedBy
             $args[] = "mappedBy: '{$otherProp}'";
-        }
-        /* ②  normal mapping rules for everything else */
-        elseif ($otherProp) {
-            if (in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
-                $args[] = "mappedBy: '{$otherProp}'";
-            } elseif (in_array($attr, ['ManyToOne', 'OneToOne'], true)) {
-                $args[] = "inversedBy: '{$otherProp}'";
-            }
+        } elseif ($otherProp) {
+            $args[] = in_array($attr,['OneToMany','ManyToMany'],true)
+                ? "mappedBy: '{$otherProp}'"
+                : "inversedBy: '{$otherProp}'";
         }
 
         /* ③  joinTable for owning Many-to-Many (unchanged) */
@@ -454,13 +452,15 @@ final class MakeEntityCommand extends Command
         string  $prop,
         string  $attr,
         string  $target,
-        ?string $otherProp = null           // ← unchanged
+        ?string $otherProp = null,
+        bool    $isInverseOneToOne = false
     ): void {
         $this->inverseQueue[$fqcn][] = [
             'prop'       => $prop,
             'attr'       => $attr,
             'target'     => $target,
             'other_prop' => $otherProp,
+            'inverse_o2o'=> $isInverseOneToOne,
         ];
     }
 
@@ -496,7 +496,8 @@ final class MakeEntityCommand extends Command
                     $meth,
                     $d['other_prop'],
                     $d['joinTable'] ?? null,
-                    $already                    // only skip if it’s really there
+                    $this->hasProperty($body,$d['prop']),
+                    $d['inverse_o2o'] ?? false,
                 );
             }
 
