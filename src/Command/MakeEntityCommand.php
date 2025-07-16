@@ -259,7 +259,8 @@ final class MakeEntityCommand extends Command
                 $inverseProp,
                 $invAttr,
                 "App\\Entity\\$selfClass",
-                $prop
+                $prop,
+                $attr === 'OneToOne'
             );
         }
 
@@ -349,7 +350,13 @@ final class MakeEntityCommand extends Command
         /* ───── build attribute arguments ───── */
         $args = ["targetEntity: {$short}::class"];
 
-        if ($otherProp) {
+        /* ①  special-case: inverse side of One-to-One  */
+        if ($attr === 'OneToOne' && $skipProperty && $otherProp) {
+            // This is the *inverse* side – it should point back with mappedBy
+            $args[] = "mappedBy: '{$otherProp}'";
+        }
+        /* ②  normal mapping rules for everything else */
+        elseif ($otherProp) {
             if (in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
                 $args[] = "mappedBy: '{$otherProp}'";
             } elseif (in_array($attr, ['ManyToOne', 'OneToOne'], true)) {
@@ -357,8 +364,9 @@ final class MakeEntityCommand extends Command
             }
         }
 
+        /* ③  joinTable for owning Many-to-Many (unchanged) */
         if ($attr === 'ManyToMany' && $joinTable) {
-            $jt     = $joinTable;
+            $jt = $joinTable;
             $args[] = "joinTable: new JoinTable(name: '{$jt->name}', "
                 . "joinColumn: '{$jt->joinColumn}', "
                 . "inverseColumn: '{$jt->inverseColumn}')";
@@ -447,13 +455,15 @@ final class MakeEntityCommand extends Command
         string $prop,
         string $attr,
         string $target,
-        ?string $otherProp = null
+        ?string $otherProp = null,
+        bool $isInverseOneToOne = false
     ): void {
         $this->inverseQueue[$fqcn][] = [
             'prop'       => $prop,
             'attr'       => $attr,
             'target'     => $target,
             'other_prop' => $otherProp,
+            'inverse_o2o' => $isInverseOneToOne,
         ];
     }
 
@@ -477,7 +487,8 @@ final class MakeEntityCommand extends Command
                     $d['prop'],$d['attr'],$d['target'],
                     $props,$ctor,$meth,
                     $d['other_prop'],
-                    $d['joinTable'] ?? null
+                    $d['joinTable'] ?? null,
+                    $d['inverse_o2o'] ?? false
                 );
             }
 
