@@ -208,16 +208,20 @@ final class MakeEntityCommand extends Command
 
         $short = str_contains($target,'\\') ? substr($target,strrpos($target,'\\')+1) : $target;
         $fqcn  = str_contains($target,'\\') ? $target : "App\\Entity\\$target";
+
+        if (in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
+            // plural suggestion for collections
+            $suggest = lcfirst($this->inflector->pluralize($short));
+        } else {
+            // singular for 1-to-1 / many-to-1
+            $suggest = lcfirst($short);
+        }
+
         $joinTable = null;
         /* property name */
         if ($attr === 'ManyToMany') {
             // default to owning-sided ManyToMany
             $owning = true;
-            // default prop name
-            $suggest = lcfirst($owning
-                ? $this->inflector->pluralize($short)
-                : $short
-            );
             if ($owning) {
                 // default table name: alphabetical snake
                 [$a, $b] = [lcfirst($selfClass), lcfirst($short)];
