@@ -3,17 +3,16 @@ declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
 
+use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Router\RouteCollection;
 
 /**
  * Lists every registered route in a simple console table.
  */
+#[CommandAttr('route:list', 'Display all registered routes.')]
 final class RouteListCommand extends Command
 {
-    protected string $signature   = 'route:list';
-    protected string $description = 'Display all registered routes.';
-
     public function __construct(private RouteCollection $routes)
     {
         parent::__construct();
