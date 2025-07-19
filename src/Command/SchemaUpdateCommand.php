@@ -58,10 +58,39 @@ final class SchemaUpdateCommand extends Command
 
         // 5) Apply if forced
         if ($force) {
-            $this->db->pdo()->exec($sql);
-            $this->info('✅  Schema updated successfully.');
+            $pdo = $this->db->pdo();
+
+            try {
+                // split on “;” followed by newline / EOF
+                $stmts = preg_split('/;\\s*(?=\\R|$)/', trim($sql));
+                foreach ($stmts as $stmt) {
+                    $stmt = trim($stmt);
+                    if ($stmt === '') {
+                        continue;
+                    }
+                    try {
+                        $pdo->exec($stmt);
+                    } catch (\PDOException $e) {
+                        // ignore “already exists” / duplicate-column errors
+                        if (in_array($e->getCode(), ['42S21', '42S01'], true)) {
+                            $this->line('Skipped: ' . substr($stmt, 0, 50) . '…');
+                            continue;
+                        }
+                        throw $e;   // anything else is fatal
+                    }
+                }
+
+                $this->info('✅  Schema updated successfully.');
+            } catch (\PDOException $e) {
+                // only roll back if a txn is still open (unlikely with DDL)
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $this->error('❌  Failed: ' . $e->getMessage());
+                return self::FAILURE;
+            }
         } elseif (! $dump) {
-            $this->info('ℹ️  No action taken. Use `--dump` to preview or `--force` to apply.');
+            $this->info('ℹ️  No action taken. Use --dump to preview or --force to apply.');
         }
 
         return self::SUCCESS;

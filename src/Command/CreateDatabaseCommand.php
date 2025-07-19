@@ -19,21 +19,26 @@ final class CreateDatabaseCommand extends Command
 
     protected function handle(): int
     {
-        /** -----------------------------------------------
-         * 1. Load connection config (same as Connection.php)
-         * ---------------------------------------------- */
         $cfg   = require base_path('config/database.php');
         $conn  = $cfg['connections'][$cfg['default']] ?? [];
 
-        $dsn   = $conn['dsn']      ?? '';
-        $user  = $conn['username'] ?? 'root';
-        $pass  = $conn['password'] ?? '';
+        $dsn     = $conn['dsn']      ?? '';
+        $appUser = $conn['username'] ?? 'root';
+        $appPass = $conn['password'] ?? '';
 
-        /* -----------------------------------------------
-         * 2. Parse the DSN → host / port / dbname
-         * ---------------------------------------------- */
-        $parts = [];
-        foreach (explode(';', $dsn) as $chunk) {
+        // only MySQL connections are supported
+        if (! str_starts_with($dsn, 'mysql:')) {
+            $this->info('db:create skipped: driver not MySQL.');
+            return self::SUCCESS;
+        }
+
+        $rootUser = $_ENV['DB_ROOT_USER']     ?? 'root';
+        $rootPass = $_ENV['DB_ROOT_PASSWORD'] ?? ($_ENV['MYSQL_ROOT_PASSWORD'] ?? '');
+
+        // parse out host/port/dbname
+        $dsnBody = preg_replace('/^[^:]+:/', '', $dsn);
+        $parts   = [];
+        foreach (explode(';', $dsnBody) as $chunk) {
             if ($chunk === '') continue;
             [$k, $v] = array_map('trim', explode('=', $chunk, 2));
             $parts[$k] = $v;
@@ -43,22 +48,36 @@ final class CreateDatabaseCommand extends Command
         $port = $parts['port']   ?? 3306;
         $name = $parts['dbname'] ?? 'app';
 
-        /* -----------------------------------------------
-         * 3. Connect to MySQL *without* selecting database
-         * ---------------------------------------------- */
-        $pdo = new \PDO(
-            sprintf('mysql:host=%s;port=%s;charset=utf8mb4', $host, $port),
-            $user,
-            $pass,
-            [
-                \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
-                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-            ]
-        );
+        // connect as root (so we can CREATE DATABASE)
+        $dsnTpl = 'mysql:host=%s;port=%s;charset=utf8mb4';
+        try {
+            $pdo = new \PDO(
+                sprintf($dsnTpl, $host, $port),
+                $rootUser,
+                $rootPass,
+                [
+                    \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
+                    \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                ]
+            );
+        } catch (\PDOException $e) {
+            // fallback on localhost if container name isn’t resolvable
+            if (str_contains($e->getMessage(), 'getaddrinfo')) {
+                $pdo = new \PDO(
+                    sprintf($dsnTpl, '127.0.0.1', $port),
+                    $rootUser,
+                    $rootPass,
+                    [
+                        \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
+                        \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                    ]
+                );
+            } else {
+                $this->error("Failed to connect as root to {$host}:{$port} — " . $e->getMessage());
+                return self::FAILURE;
+            }
+        }
 
-        /* -----------------------------------------------
-         * 4. Create schema if missing
-         * ---------------------------------------------- */
         $sql = sprintf(
             'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
             $name
@@ -66,7 +85,7 @@ final class CreateDatabaseCommand extends Command
         $pdo->exec($sql);
 
         $this->info("Database “{$name}” is ready on {$host}:{$port}.");
-
         return self::SUCCESS;
     }
+
 }

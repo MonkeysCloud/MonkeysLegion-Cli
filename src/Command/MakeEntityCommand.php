@@ -7,6 +7,9 @@ namespace MonkeysLegion\Cli\Command;
 use MonkeysLegion\Cli\Config\EntityConfig;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
+use MonkeysLegion\Entity\Attributes\JoinTable;
+use Doctrine\Inflector\Inflector;
+use Doctrine\Inflector\InflectorFactory;
 
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
 final class MakeEntityCommand extends Command
@@ -39,6 +42,9 @@ final class MakeEntityCommand extends Command
     private array $completions  = [];
     private array $inverseQueue = [];
 
+    /** @var Inflector */
+    private Inflector $inflector;
+
     /**
      * Handles the process of creating or updating an entity file.
      *
@@ -54,6 +60,8 @@ final class MakeEntityCommand extends Command
         if (function_exists('readline_completion_function')) {
             readline_completion_function([$this, 'readlineComplete']);
         }
+
+        $this->inflector = InflectorFactory::create()->build();
 
         /* 1️⃣  entity name */
         $name = $_SERVER['argv'][2] ?? $this->ask('Enter entity name (e.g. User)');
@@ -117,22 +125,33 @@ final class MakeEntityCommand extends Command
                 $props,
                 $ctors,
                 $methods,
-                $m['other_prop'] ?? null
+                $m['other_prop'] ?? null,
+                $m['joinTable'] ?? null,
+                $this->hasProperty($code ?? '', $p)
             );
         }
 
         /* 6️⃣  inject into file */
+        /* 6️⃣  inject into file */
         $code = file_get_contents($file);
         if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
+            // Use your insertBeforeConstructor method for properties
             $body = $this->insertBeforeConstructor($m['body'], rtrim(implode("\n", $props)));
 
-            $body = preg_replace(
-                '/(public function __construct\(\)\s*\{)/',
-                "$1\n" . implode("\n", $ctors),
-                $body
-            );
+            // Keep the improved constructor handling from incoming
+            if (!empty($ctors)) {
+                $body = preg_replace(
+                    '/(public function __construct\(\)\s*\{)/',
+                    "$1\n" . implode("\n", $ctors),
+                    $body
+                );
+            }
 
-            $body .= "\n" . implode("\n", $methods) . "\n";
+            // Keep the improved methods handling from incoming
+            if (!empty($methods)) {
+                $body .= "\n" . implode("\n", $methods) . "\n";
+            }
+
             file_put_contents($file, $m['head'] . $body . $m['tail'] . "\n");
         }
         $this->info("✅  Updated $file");
@@ -188,8 +207,33 @@ final class MakeEntityCommand extends Command
         $short = str_contains($target, '\\') ? substr($target, strrpos($target, '\\') + 1) : $target;
         $fqcn  = str_contains($target, '\\') ? $target : "App\\Entity\\$target";
 
+        if (in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
+            // plural suggestion for collections
+            $suggest = lcfirst($this->inflector->pluralize($short));
+        } else {
+            // singular for 1-to-1 / many-to-1
+            $suggest = lcfirst($short);
+        }
+
+        $joinTable = null;
         /* property name */
-        $suggest = lcfirst($short) . ($attr === 'OneToMany' || $attr === 'ManyToMany' ? 's' : '');
+        if ($attr === 'ManyToMany') {
+            // default to owning-sided ManyToMany
+            $owning = true;
+            if ($owning) {
+                // default table name: alphabetical snake
+                [$a, $b] = [lcfirst($selfClass), lcfirst($short)];
+                // build array, then sort it by reference
+                $arr = [$this->snake($a), $this->snake($b)];
+                sort($arr);
+                $default = implode('_', $arr);
+
+                $tbl  = $this->ask("  Join table name [$default]") ?: $default;
+                $colA = $this->ask("  Column for {$selfClass} [{$arr[0]}_id]")  ?: "{$arr[0]}_id";
+                $colB = $this->ask("  Column for {$short} [{$arr[1]}_id]")      ?: "{$arr[1]}_id";
+                $joinTable = new JoinTable(name: $tbl, joinColumn: $colA, inverseColumn: $colB);
+            }
+        }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
         if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
 
@@ -197,22 +241,33 @@ final class MakeEntityCommand extends Command
         $inverseProp = null;
         if (strtolower($this->ask('  Generate inverse side in target? [y/N]')) === 'y') {
             $invAttr = $this->inverseMap[$attr];
-            $defName = lcfirst($_SERVER['argv'][2] ?? 'self') . ($invAttr === 'OneToMany' || $invAttr === 'ManyToMany' ? 's' : '');
-            $inverseProp = $this->ask("  Inverse property in $short [$defName]") ?: $defName;
+            $base = lcfirst($selfClass);
+            if (in_array($invAttr, ['OneToMany', 'ManyToMany'], true)) {
+                // proper plural, e.g. “companies”
+                $defName = $this->inflector->pluralize($base);
+            } else {
+                // singular
+                $defName = $base;
+            }
+
+            $inverseProp = $this->ask("  Inverse property in $short [{$defName}]") ?: $defName;
             $this->queueInverse(
-                $fqcn,                             // target entity FQCN
-                $inverseProp,                      // property over there
-                $invAttr,                          // its attribute kind
-                "App\\Entity\\$selfClass",             // points back here
-                $prop                              // ← other_prop for mappedBy/inversedBy
+                $fqcn,
+                $inverseProp,
+                $invAttr,
+                "App\\Entity\\$selfClass",
+                $prop,
+                $attr === 'OneToOne',
             );
         }
 
         $out[$prop] = [
             'attr'       => $attr,
             'target'     => $fqcn,
-            'other_prop' => $inverseProp        // may be null
+            'other_prop' => $inverseProp,
+            'joinTable'  => $joinTable
         ];
+
         $this->info("  ➕  $prop:$kind ➔ $fqcn");
     }
 
@@ -270,6 +325,8 @@ final class MakeEntityCommand extends Command
      * @param array       &$ctor      where to append any constructor initializers
      * @param array       &$meth      where to append the generated methods
      * @param string|null $otherProp  property name on the opposite side (null if none)
+     * @param JoinTable|null $joinTable  the join table definition (if ManyToMany)
+     * @param bool       $skipProperty whether to skip emitting the property itself
      */
     private function emitRelation(
         string $prop,
@@ -278,36 +335,54 @@ final class MakeEntityCommand extends Command
         array  &$props,
         array  &$ctor,
         array  &$meth,
-        ?string $otherProp = null
+        ?string $otherProp = null,
+        ?JoinTable $joinTable = null,
+        bool $skipProperty = false,
+        bool $inverseO2O = false
     ): void {
-        // get the short class name (e.g. “Project” from “App\Entity\Project”)
-        $short  = substr($target, strrpos($target, '\\') + 1);
-        $Stud   = ucfirst($prop);
-        $many   = in_array($attr, ['OneToMany', 'ManyToMany'], true);
+        // short class name (“Project” from “App\Entity\Project”)
+        $short = substr($target, strrpos($target, '\\') + 1);
+        $Stud  = ucfirst($prop);
+        $many  = in_array($attr, ['OneToMany', 'ManyToMany'], true);
 
-        // build mappedBy / inversedBy if we know the other side
-        $extra = '';
-        if ($attr === 'OneToMany' || ($attr === 'ManyToMany' && $otherProp)) {
-            $mapped = $otherProp ?: lcfirst($_SERVER['argv'][2] ?? 'self');
-            $extra  = ", mappedBy: '$mapped'";
-        } elseif (($attr === 'ManyToOne' || $attr === 'OneToOne' || $attr === 'ManyToMany') && $otherProp) {
-            $extra = ", inversedBy: '$otherProp'";
+        /* ───── build attribute arguments ───── */
+        $args = ["targetEntity: {$short}::class"];
+
+        /* ①  special-case: inverse side of One-to-One  */
+        if ($attr === 'OneToOne' && $inverseO2O && $otherProp) {
+            // explicit inverse side ⇒ mappedBy
+            $args[] = "mappedBy: '{$otherProp}'";
+        } elseif ($otherProp) {
+            $args[] = in_array($attr, ['OneToMany', 'ManyToMany'], true)
+                ? "mappedBy: '{$otherProp}'"
+                : "inversedBy: '{$otherProp}'";
         }
 
-        // ─────────── property + attribute ───────────
-        if ($many) {
-            // doc-block always array
-            $props[] = "    /** @var {$short}[] */";
-            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
-            $props[] = "    public array \${$prop};";
-            $ctor[]  = "        \$this->{$prop} = [];";
-        } else {
-            $props[] = "    #[{$attr}(targetEntity: {$short}::class{$extra})]";
-            $props[] = "    public ?{$short} \${$prop} = null;";
+        /* ③  joinTable for owning Many-to-Many (unchanged) */
+        if ($attr === 'ManyToMany' && $joinTable) {
+            $jt = $joinTable;
+            $args[] = "joinTable: new JoinTable(name: '{$jt->name}', "
+                . "joinColumn: '{$jt->joinColumn}', "
+                . "inverseColumn: '{$jt->inverseColumn}')";
         }
-        $props[] = "";
 
-        // ─────────── methods ───────────
+        /* ───── property + constructor (only if not skipped) ───── */
+        if (!$skipProperty) {
+            if ($many) {
+                $props[] = "    /** @var {$short}[] */";
+            }
+            $props[] = '    #[' . $attr . '(' . implode(', ', $args) . ')]';
+            $props[] = $many
+                ? "    public array \${$prop};"
+                : "    public ?{$short} \${$prop} = null;";
+            $props[] = "";
+
+            if ($many) {            // initialise collection
+                $ctor[] = "        \$this->{$prop} = [];";
+            }
+        }
+
+        /* ───── methods (always emitted – duplicates filtered earlier) ───── */
         if ($many) {
             // add()
             $meth[] = "    public function add{$short}({$short} \$item): self";
@@ -370,17 +445,19 @@ final class MakeEntityCommand extends Command
      * @param string|null $otherProp  Property name on this side for mappedBy/inversedBy
      */
     private function queueInverse(
-        string $fqcn,
-        string $prop,
-        string $attr,
-        string $target,
-        ?string $otherProp = null
+        string  $fqcn,
+        string  $prop,
+        string  $attr,
+        string  $target,
+        ?string $otherProp = null,
+        bool    $isInverseOneToOne = false
     ): void {
         $this->inverseQueue[$fqcn][] = [
             'prop'       => $prop,
             'attr'       => $attr,
             'target'     => $target,
             'other_prop' => $otherProp,
+            'inverse_o2o' => $isInverseOneToOne,
         ];
     }
 
@@ -393,12 +470,18 @@ final class MakeEntityCommand extends Command
     {
         foreach ($this->inverseQueue as $fqcn => $defs) {
             $file = base_path('app/Entity/' . substr($fqcn, strrpos($fqcn, '\\') + 1) . '.php');
-            if (!is_file($file)) $this->createStub(substr($fqcn, strrpos($fqcn, '\\') + 1), $file);
+            if (!is_file($file)) {
+                $this->createStub(substr($fqcn, strrpos($fqcn, '\\') + 1), $file);
+            }
 
             $code = file_get_contents($file);
-            if (!preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) continue;
+            if (!preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
+                continue;
+            }
 
+            $body  = $m['body'];
             $props = $ctor = $meth = [];
+
             foreach ($defs as $d) {
                 $this->emitRelation(
                     $d['prop'],
@@ -407,14 +490,32 @@ final class MakeEntityCommand extends Command
                     $props,
                     $ctor,
                     $meth,
-                    $d['other_prop']
+                    $d['other_prop'],
+                    $d['joinTable'] ?? null,           // Keep from incoming
+                    $this->hasProperty($body, $d['prop']), // Keep from incoming  
+                    $d['inverse_o2o'] ?? false,        // Keep from incoming
                 );
             }
 
+            // Use your insertBeforeConstructor method for properties
             $body = $this->insertBeforeConstructor(
                 $m['body'],
                 rtrim(implode("\n", $props))
             );
+
+            // Keep the improved constructor handling from incoming
+            $body = preg_replace(
+                '/(public function __construct\(\)\s*\{)/',
+                "$1\n" . implode("\n", $ctor),
+                $body,
+                1,
+                $ok
+            );
+            if (!$ok && $ctor) {
+                $body = "    public function __construct()\n    {\n" .
+                    implode("\n", $ctor) . "\n    }\n\n" . $body;
+            }
+            $body .= "\n" . implode("\n", $meth) . "\n";
 
             $body = preg_replace(
                 '/(public function __construct\(\)\s*\{)/',
@@ -501,6 +602,7 @@ final class MakeEntityCommand extends Command
                     use MonkeysLegion\Entity\Attributes\OneToMany;
                     use MonkeysLegion\Entity\Attributes\ManyToOne;
                     use MonkeysLegion\Entity\Attributes\ManyToMany;
+                    use MonkeysLegion\Entity\Attributes\JoinTable;
 
                     #[Entity]
                     class {$name}
@@ -602,6 +704,12 @@ final class MakeEntityCommand extends Command
 
         file_put_contents($file, $code);
         $this->info("✅  Created stub $file");
+    }
+
+    /** Does $body already contain `public … $prop`? */
+    private function hasProperty(string $body, string $prop): bool
+    {
+        return (bool) preg_match('/public\s+(?:\?\w+|array)\s+\$' . preg_quote($prop, '/') . '\b/', $body);
     }
 
     /**
