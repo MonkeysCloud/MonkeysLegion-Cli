@@ -19,25 +19,24 @@ final class CreateDatabaseCommand extends Command
 
     protected function handle(): int
     {
-        /** -----------------------------------------------------------------
-         * 1. Load connection config (same as Connection.php)
-         * ---------------------------------------------------------------- */
         $cfg   = require base_path('config/database.php');
         $conn  = $cfg['connections'][$cfg['default']] ?? [];
 
-        // application‐level creds (not used here)
         $dsn     = $conn['dsn']      ?? '';
         $appUser = $conn['username'] ?? 'root';
         $appPass = $conn['password'] ?? '';
 
-        // root‐level creds from env / docker-compose
+        // only MySQL connections are supported
+        if (! str_starts_with($dsn, 'mysql:')) {
+            $this->info('db:create skipped: driver not MySQL.');
+            return self::SUCCESS;
+        }
+
         $rootUser = $_ENV['DB_ROOT_USER']     ?? 'root';
         $rootPass = $_ENV['DB_ROOT_PASSWORD'] ?? ($_ENV['MYSQL_ROOT_PASSWORD'] ?? '');
 
-        /** -----------------------------------------------------------------
-         * 2. Parse the DSN → host / port / dbname
-         * ---------------------------------------------------------------- */
-        $dsnBody = preg_replace('/^[^:]+:/', '', $dsn);   // → host=db;port=3306;...
+        // parse out host/port/dbname
+        $dsnBody = preg_replace('/^[^:]+:/', '', $dsn);
         $parts   = [];
         foreach (explode(';', $dsnBody) as $chunk) {
             if ($chunk === '') continue;
@@ -49,10 +48,7 @@ final class CreateDatabaseCommand extends Command
         $port = $parts['port']   ?? 3306;
         $name = $parts['dbname'] ?? 'app';
 
-        /** -----------------------------------------------------------------
-         * 3. Connect to MySQL *without* selecting database
-         *    (use root creds so we can CREATE DATABASE)
-         * ---------------------------------------------------------------- */
+        // connect as root (so we can CREATE DATABASE)
         $dsnTpl = 'mysql:host=%s;port=%s;charset=utf8mb4';
         try {
             $pdo = new \PDO(
@@ -65,7 +61,7 @@ final class CreateDatabaseCommand extends Command
                 ]
             );
         } catch (\PDOException $e) {
-            // if DNS lookup fails (running on host), retry on localhost
+            // fallback on localhost if container name isn’t resolvable
             if (str_contains($e->getMessage(), 'getaddrinfo')) {
                 $pdo = new \PDO(
                     sprintf($dsnTpl, '127.0.0.1', $port),
@@ -82,9 +78,6 @@ final class CreateDatabaseCommand extends Command
             }
         }
 
-        /** -----------------------------------------------------------------
-         * 4. Create schema if missing
-         * ---------------------------------------------------------------- */
         $sql = sprintf(
             'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
             $name
@@ -92,7 +85,7 @@ final class CreateDatabaseCommand extends Command
         $pdo->exec($sql);
 
         $this->info("Database “{$name}” is ready on {$host}:{$port}.");
-
         return self::SUCCESS;
     }
+
 }
