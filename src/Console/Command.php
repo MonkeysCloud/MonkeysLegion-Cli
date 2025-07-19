@@ -14,9 +14,20 @@ abstract class Command
 
     /* ---------- helpers -------------------------------------------------- */
 
-    protected function info(string $msg): void   { $this->write($msg, 32); }
-    protected function line(string $msg): void   { $this->write($msg); }
-    protected function error(string $msg): void  { $this->write($msg, 31); }
+    protected function info(string $msg): void
+    {
+        $this->write($msg, 32);
+    }
+
+    protected function line(string $msg): void
+    {
+        $this->write($msg);
+    }
+    
+    protected function error(string $msg): void
+    {
+        $this->write($msg, 31);
+    }
 
     public function __construct() {}
 
