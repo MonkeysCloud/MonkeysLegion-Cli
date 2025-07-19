@@ -124,7 +124,7 @@ final class MakeEntityCommand extends Command
         /* 6️⃣  inject into file */
         $code = file_get_contents($file);
         if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
-            $body = "\n" . implode("\n", $props) . $m['body'];
+            $body = $this->insertBeforeConstructor($m['body'], rtrim(implode("\n", $props)));
 
             $body = preg_replace(
                 '/(public function __construct\(\)\s*\{)/',
@@ -411,7 +411,11 @@ final class MakeEntityCommand extends Command
                 );
             }
 
-            $body = "\n" . implode("\n", $props) . $m['body'];
+            $body = $this->insertBeforeConstructor(
+                $m['body'],
+                rtrim(implode("\n", $props))
+            );
+
             $body = preg_replace(
                 '/(public function __construct\(\)\s*\{)/',
                 "$1\n" . implode("\n", $ctor),
@@ -419,6 +423,7 @@ final class MakeEntityCommand extends Command
                 1,
                 $ok
             );
+
             if (!$ok && $ctor) {
                 $body = "    public function __construct()\n    {\n" .
                     implode("\n", $ctor) . "\n    }\n\n" . $body;
@@ -485,33 +490,33 @@ final class MakeEntityCommand extends Command
     private function createStub(string $name, string $file): void
     {
         $template = <<<PHP
-                        <?php
-                        declare(strict_types=1);
+                    <?php
+                    declare(strict_types=1);
 
-                        namespace App\Entity;
+                    namespace App\Entity;
 
-                        use MonkeysLegion\Entity\Attributes\Entity;
-                        use MonkeysLegion\Entity\Attributes\Field;
-                        use MonkeysLegion\Entity\Attributes\OneToOne;
-                        use MonkeysLegion\Entity\Attributes\OneToMany;
-                        use MonkeysLegion\Entity\Attributes\ManyToOne;
-                        use MonkeysLegion\Entity\Attributes\ManyToMany;
+                    use MonkeysLegion\Entity\Attributes\Entity;
+                    use MonkeysLegion\Entity\Attributes\Field;
+                    use MonkeysLegion\Entity\Attributes\OneToOne;
+                    use MonkeysLegion\Entity\Attributes\OneToMany;
+                    use MonkeysLegion\Entity\Attributes\ManyToOne;
+                    use MonkeysLegion\Entity\Attributes\ManyToMany;
 
-                        #[Entity]
-                        class {$name}
+                    #[Entity]
+                    class {$name}
+                    {
+                        #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
+                        public int \$id;
+
+                        public function __construct()
                         {
-                            #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
-                            public int \$id;
-
-                            public function __construct()
-                            {
-                            }
-
-                            public function getId(): int
-                            {
-                                return \$this->id;
-                            }
                         }
+
+                        public function getId(): int
+                        {
+                            return \$this->id;
+                        }
+                    }
 
                     PHP;
 
@@ -613,6 +618,27 @@ final class MakeEntityCommand extends Command
     {
         return strtolower(
             preg_replace('/([a-z])([A-Z])/', '\$1_\$2', $class)
+        );
+    }
+
+    /**
+     * Insert a string before the constructor in the class body.
+     *
+     * This method uses a regular expression to find the constructor definition
+     * and inserts the provided string before it.
+     *
+     * @param string $body  The class body where the constructor is located.
+     * @param string $inject The string to insert before the constructor.
+     *
+     * @return string The modified class body with the injected string.
+     */
+    private function insertBeforeConstructor(string $body, string $inject): string
+    {
+        return preg_replace(
+            '/(public function __construct\(\)\s*\{)/',
+            preg_replace('/^ {4}/', '', $inject) . "\n\n    $1",
+            $body,
+            1
         );
     }
 }
