@@ -1,8 +1,10 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
 
+use MonkeysLegion\Cli\Config\EntityConfig;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Entity\Attributes\JoinTable;
@@ -14,44 +16,27 @@ final class MakeEntityCommand extends Command
 {
 
     /** @var string[] DB scalar types offered in the wizard */
-    private array $fieldTypes = [
-        'string','char','text','mediumText','longText',
-        'integer','tinyInt','smallInt','bigInt','unsignedBigInt',
-        'decimal','float','boolean',
-        'date','time','datetime','datetimetz','timestamp','timestamptz','year',
-        'uuid','binary','json','simple_json','array','simple_array',
-        'enum','set','geometry','point','linestring','polygon',
-        'ipAddress','macAddress',
-    ];
+    private array $fieldTypes;
 
     /** CLI keyword → attribute class */
-    private array $relTypes = [
-        'oneToOne'   => 'OneToOne',
-        'oneToMany'  => 'OneToMany',
-        'manyToOne'  => 'ManyToOne',
-        'manyToMany' => 'ManyToMany',
-    ];
+    private array $relTypes;
 
     /** owning-side attribute → inverse attribute */
-    private array $inverseMap = [
-        'OneToOne'   => 'OneToOne',
-        'ManyToOne'  => 'OneToMany',
-        'OneToMany'  => 'ManyToOne',
-        'ManyToMany' => 'ManyToMany',
-    ];
+    private array $inverseMap;
 
     /** DB type → PHP type */
-    private array $phpTypeMap = [
-        /* text  */ 'string'=>'string','char'=>'string','text'=>'string',
-        'mediumText'=>'string','longText'=>'string',
-        /* nums  */ 'integer'=>'int','tinyInt'=>'int','smallInt'=>'int','bigInt'=>'int',
-        'unsignedBigInt'=>'int','decimal'=>'float','float'=>'float','boolean'=>'bool','year'=>'int',
-        /* date  */ 'date'=>'\DateTimeImmutable','time'=>'\DateTimeImmutable','datetime'=>'\DateTimeImmutable',
-        'datetimetz'=>'\DateTimeImmutable','timestamp'=>'\DateTimeImmutable','timestamptz'=>'\DateTimeImmutable',
-        /* json  */ 'json'=>'array','simple_json'=>'array','array'=>'array','simple_array'=>'array','set'=>'array',
-        /* misc  */ 'uuid'=>'string','binary'=>'string','enum'=>'string','geometry'=>'string','point'=>'string',
-        'linestring'=>'string','polygon'=>'string','ipAddress'=>'string','macAddress'=>'string',
-    ];
+    private array $phpTypeMap;
+
+    public function __construct(
+        private EntityConfig $config,
+    ) {
+        parent::__construct();
+
+        $this->fieldTypes = $this->config->fieldTypes->all();
+        $this->relTypes = $this->config->relationKeywordMap->all();
+        $this->inverseMap = $this->config->relationInverseMap->all();
+        $this->phpTypeMap = $this->config->phpTypeMap->all();
+    }
 
     /* helpers */
     private array $completions  = [];
@@ -73,7 +58,7 @@ final class MakeEntityCommand extends Command
     protected function handle(): int
     {
         if (function_exists('readline_completion_function')) {
-            readline_completion_function([$this,'readlineComplete']);
+            readline_completion_function([$this, 'readlineComplete']);
         }
 
         $this->inflector = InflectorFactory::create()->build();
@@ -96,7 +81,8 @@ final class MakeEntityCommand extends Command
 
         /* 3️⃣  scan existing props */
         $src = file_get_contents($file);
-        preg_match_all('/#\[Field.+\$([A-Za-z0-9_]+)/',                $src, $m); $existingFields = $m[1] ?? [];
+        preg_match_all('/#\[Field.+\$([A-Za-z0-9_]+)/',                $src, $m);
+        $existingFields = $m[1] ?? [];
         preg_match_all('/#\[(OneToOne|OneToMany|ManyToOne|ManyToMany).+\$([A-Za-z0-9_]+)/', $src, $m);
         $existingRels = $m[2] ?? [];
 
@@ -109,12 +95,22 @@ final class MakeEntityCommand extends Command
         $this->line("[2] Add relationship");
         $this->line("[3] Finish & save");
         switch ($this->ask('Choose option 1-3')) {
-            case '1': $this->wizardField($existingFields, $newFields); goto menu;
-            case '2': $this->wizardRelation($existingRels, $newRels, $name);  goto menu;
-            case '3': break;
-            default : $this->error('Enter 1, 2 or 3');                 goto menu;
+            case '1':
+                $this->wizardField($existingFields, $newFields);
+                goto menu;
+            case '2':
+                $this->wizardRelation($existingRels, $newRels, $name);
+                goto menu;
+            case '3':
+                break;
+            default:
+                $this->error('Enter 1, 2 or 3');
+                goto menu;
         }
-        if (!$newFields && !$newRels) { $this->info('No changes.'); return self::SUCCESS; }
+        if (!$newFields && !$newRels) {
+            $this->info('No changes.');
+            return self::SUCCESS;
+        }
 
         /* 5️⃣  build fragments */
         $props = $ctors = $methods = [];
@@ -123,8 +119,12 @@ final class MakeEntityCommand extends Command
         }
         foreach ($newRels as $p => $m) {
             $this->emitRelation(
-                $p, $m['attr'], $m['target'],
-                $props, $ctors, $methods,
+                $p,
+                $m['attr'],
+                $m['target'],
+                $props,
+                $ctors,
+                $methods,
                 $m['other_prop'] ?? null,
                 $m['joinTable'] ?? null,
                 $this->hasProperty($code ?? '', $p)
@@ -132,22 +132,13 @@ final class MakeEntityCommand extends Command
         }
 
         /* 6️⃣  inject into file */
+        /* 6️⃣  inject into file */
         $code = file_get_contents($file);
         if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
-            $body = $m['body'];
+            // Use your insertBeforeConstructor method for properties
+            $body = $this->insertBeforeConstructor($m['body'], rtrim(implode("\n", $props)));
 
-            // Insert exactly one blank line + your props + one trailing newline
-            if (!empty($props)) {
-                $propsBlock = "\n" . implode("\n", $props) . "\n";
-                $body = preg_replace(
-                    '/(?=\s*public function __construct\(\))/m',
-                    $propsBlock,
-                    $body,
-                    1
-                );
-            }
-
-            // Then patch constructor
+            // Keep the improved constructor handling from incoming
             if (!empty($ctors)) {
                 $body = preg_replace(
                     '/(public function __construct\(\)\s*\{)/',
@@ -156,7 +147,7 @@ final class MakeEntityCommand extends Command
                 );
             }
 
-            // Finally append your methods
+            // Keep the improved methods handling from incoming
             if (!empty($methods)) {
                 $body .= "\n" . implode("\n", $methods) . "\n";
             }
@@ -178,11 +169,16 @@ final class MakeEntityCommand extends Command
      */
     private function wizardField(array $existing, array &$out): void
     {
-        $prop = $this->ask('  Field name'); if ($prop===''||isset($existing[$prop])||isset($out[$prop])) return;
-        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/',$prop)) { $this->error('Invalid.'); return; }
+        $prop = $this->ask('  Field name');
+        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
+        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
+            $this->error('Invalid.');
+            return;
+        }
 
         $type = $this->chooseOption('field', $this->fieldTypes);
-        $out[$prop]=$type; $this->info("  ➕  $prop:$type added.");
+        $out[$prop] = $type;
+        $this->info("  ➕  $prop:$type added.");
     }
 
     /**
@@ -196,18 +192,20 @@ final class MakeEntityCommand extends Command
         array $existing,
         array &$out,
         string $selfClass
-    ): void
-    {
+    ): void {
         $kind = $this->chooseOption('relation', array_keys($this->relTypes));
         $attr = $this->relTypes[$kind];
 
         /* target entity */
-        $this->completions = array_map(fn($f)=>basename($f,'.php'),
-            glob(base_path('app/Entity').'/*.php'));
-        $target = $this->ask('  Target entity'); if ($target==='') return;
+        $this->completions = array_map(
+            fn($f) => basename($f, '.php'),
+            glob(base_path('app/Entity') . '/*.php')
+        );
+        $target = $this->ask('  Target entity');
+        if ($target === '') return;
 
-        $short = str_contains($target,'\\') ? substr($target,strrpos($target,'\\')+1) : $target;
-        $fqcn  = str_contains($target,'\\') ? $target : "App\\Entity\\$target";
+        $short = str_contains($target, '\\') ? substr($target, strrpos($target, '\\') + 1) : $target;
+        $fqcn  = str_contains($target, '\\') ? $target : "App\\Entity\\$target";
 
         if (in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
             // plural suggestion for collections
@@ -235,17 +233,16 @@ final class MakeEntityCommand extends Command
                 $colB = $this->ask("  Column for {$short} [{$arr[1]}_id]")      ?: "{$arr[1]}_id";
                 $joinTable = new JoinTable(name: $tbl, joinColumn: $colA, inverseColumn: $colB);
             }
-
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
-        if ($prop===''||isset($existing[$prop])||isset($out[$prop])) return;
+        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
 
         /* inverse side? */
         $inverseProp = null;
         if (strtolower($this->ask('  Generate inverse side in target? [y/N]')) === 'y') {
             $invAttr = $this->inverseMap[$attr];
             $base = lcfirst($selfClass);
-            if (in_array($invAttr, ['OneToMany','ManyToMany'], true)) {
+            if (in_array($invAttr, ['OneToMany', 'ManyToMany'], true)) {
                 // proper plural, e.g. “companies”
                 $defName = $this->inflector->pluralize($base);
             } else {
@@ -356,7 +353,7 @@ final class MakeEntityCommand extends Command
             // explicit inverse side ⇒ mappedBy
             $args[] = "mappedBy: '{$otherProp}'";
         } elseif ($otherProp) {
-            $args[] = in_array($attr,['OneToMany','ManyToMany'],true)
+            $args[] = in_array($attr, ['OneToMany', 'ManyToMany'], true)
                 ? "mappedBy: '{$otherProp}'"
                 : "inversedBy: '{$otherProp}'";
         }
@@ -460,7 +457,7 @@ final class MakeEntityCommand extends Command
             'attr'       => $attr,
             'target'     => $target,
             'other_prop' => $otherProp,
-            'inverse_o2o'=> $isInverseOneToOne,
+            'inverse_o2o' => $isInverseOneToOne,
         ];
     }
 
@@ -494,35 +491,47 @@ final class MakeEntityCommand extends Command
                     $ctor,
                     $meth,
                     $d['other_prop'],
-                    $d['joinTable'] ?? null,
-                    $this->hasProperty($body,$d['prop']),
-                    $d['inverse_o2o'] ?? false,
+                    $d['joinTable'] ?? null,           // Keep from incoming
+                    $this->hasProperty($body, $d['prop']), // Keep from incoming  
+                    $d['inverse_o2o'] ?? false,        // Keep from incoming
                 );
             }
 
-            // start with the existing body
-            $body = $m['body'];
+            // Use your insertBeforeConstructor method for properties
+            $body = $this->insertBeforeConstructor(
+                $m['body'],
+                rtrim(implode("\n", $props))
+            );
 
-            // inject props just before the constructor
-            if(!empty($props)){
-                $propsBlock = "\n" . implode("\n", $props) . "\n";
-                $body = preg_replace(
-                    '/(?=\s*public function __construct\(\))/m',
-                    $propsBlock,
-                    $body,
-                    1
-                );
+            // Keep the improved constructor handling from incoming
+            $body = preg_replace(
+                '/(public function __construct\(\)\s*\{)/',
+                "$1\n" . implode("\n", $ctor),
+                $body,
+                1,
+                $ok
+            );
+            if (!$ok && $ctor) {
+                $body = "    public function __construct()\n    {\n" .
+                    implode("\n", $ctor) . "\n    }\n\n" . $body;
             }
+            $body .= "\n" . implode("\n", $meth) . "\n";
 
-            $body = preg_replace('/(public function __construct\(\)\s*\{)/',
-                "$1\n".implode("\n",$ctor),$body,1,$ok);
-            if(!$ok && $ctor){
-                $body = "    public function __construct()\n    {\n".
-                    implode("\n",$ctor)."\n    }\n\n".$body;
+            $body = preg_replace(
+                '/(public function __construct\(\)\s*\{)/',
+                "$1\n" . implode("\n", $ctor),
+                $body,
+                1,
+                $ok
+            );
+
+            if (!$ok && $ctor) {
+                $body = "    public function __construct()\n    {\n" .
+                    implode("\n", $ctor) . "\n    }\n\n" . $body;
             }
-            $body .= "\n".implode("\n",$meth)."\n";
+            $body .= "\n" . implode("\n", $meth) . "\n";
 
-            file_put_contents($file,$m['head'].$body.$m['tail']."\n");
+            file_put_contents($file, $m['head'] . $body . $m['tail'] . "\n");
             $this->info("    ↪  Patched inverse side in $file");
         }
     }
@@ -535,7 +544,9 @@ final class MakeEntityCommand extends Command
      * @return string The user's input after trimming whitespace.
      */
     private function ask(string $q): string
-    { return function_exists('readline') ? trim(readline("$q ")) : trim(fgets(STDIN)); }
+    {
+        return function_exists('readline') ? trim(readline("$q ")) : trim(fgets(STDIN));
+    }
 
     /**
      * Displays a message to the user.
@@ -544,8 +555,10 @@ final class MakeEntityCommand extends Command
      * @param int $i
      * @return array
      */
-    public function readlineComplete(string $in,int $i): array
-    { return array_filter($this->completions,fn($o)=>str_starts_with($o,$in)); }
+    public function readlineComplete(string $in, int $i): array
+    {
+        return array_filter($this->completions, fn($o) => str_starts_with($o, $in));
+    }
 
     /**
      * Displays an error message to the user.
@@ -554,14 +567,14 @@ final class MakeEntityCommand extends Command
      * @param array $opts
      * @return string
      */
-    private function chooseOption(string $kind,array $opts): string
+    private function chooseOption(string $kind, array $opts): string
     {
-        foreach ($opts as $i=>$o) $this->line(sprintf("  [%2d] %s",$i+1,$o));
-        $this->completions=$opts;
-        while(true){
-            $sel=$this->ask("Select $kind");
-            if(ctype_digit($sel)&&isset($opts[$sel-1])) return $opts[$sel-1];
-            if(in_array($sel,$opts,true)) return $sel;
+        foreach ($opts as $i => $o) $this->line(sprintf("  [%2d] %s", $i + 1, $o));
+        $this->completions = $opts;
+        while (true) {
+            $sel = $this->ask("Select $kind");
+            if (ctype_digit($sel) && isset($opts[$sel - 1])) return $opts[$sel - 1];
+            if (in_array($sel, $opts, true)) return $sel;
             $this->error('  Invalid choice.');
         }
     }
@@ -575,39 +588,39 @@ final class MakeEntityCommand extends Command
      * @param string $name The name of the entity class.
      * @param string $file The path where the stub file should be created.
      */
-    private function createStub(string $name,string $file): void
+    private function createStub(string $name, string $file): void
     {
         $template = <<<PHP
-<?php
-declare(strict_types=1);
+                    <?php
+                    declare(strict_types=1);
 
-namespace App\Entity;
+                    namespace App\Entity;
 
-use MonkeysLegion\Entity\Attributes\Entity;
-use MonkeysLegion\Entity\Attributes\Field;
-use MonkeysLegion\Entity\Attributes\OneToOne;
-use MonkeysLegion\Entity\Attributes\OneToMany;
-use MonkeysLegion\Entity\Attributes\ManyToOne;
-use MonkeysLegion\Entity\Attributes\ManyToMany;
-use MonkeysLegion\Entity\Attributes\JoinTable;
+                    use MonkeysLegion\Entity\Attributes\Entity;
+                    use MonkeysLegion\Entity\Attributes\Field;
+                    use MonkeysLegion\Entity\Attributes\OneToOne;
+                    use MonkeysLegion\Entity\Attributes\OneToMany;
+                    use MonkeysLegion\Entity\Attributes\ManyToOne;
+                    use MonkeysLegion\Entity\Attributes\ManyToMany;
+                    use MonkeysLegion\Entity\Attributes\JoinTable;
 
-#[Entity]
-class {$name}
-{
-    #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
-    public int \$id;
+                    #[Entity]
+                    class {$name}
+                    {
+                        #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
+                        public int \$id;
 
-    public function __construct()
-    {
-    }
+                        public function __construct()
+                        {
+                        }
 
-    public function getId(): int
-    {
-        return \$this->id;
-    }
-}
+                        public function getId(): int
+                        {
+                            return \$this->id;
+                        }
+                    }
 
-PHP;
+                    PHP;
 
         file_put_contents($file, $template);
     }
@@ -618,7 +631,11 @@ PHP;
      * @param string $msg
      * @return int
      */
-    private function fail(string $msg): int { $this->error($msg); return self::FAILURE; }
+    private function fail(string $msg): int
+    {
+        $this->error($msg);
+        return self::FAILURE;
+    }
 
     /**
      * Create a repository stub file for a given entity.
@@ -641,48 +658,49 @@ PHP;
         $table = $this->snake($entity);
 
         $code = <<<PHP
-<?php
-declare(strict_types=1);
+                <?php
+                declare(strict_types=1);
 
-namespace App\Repository;
+                namespace App\Repository;
 
-use MonkeysLegion\Repository\EntityRepository;
-use App\Entity\\{$entity};
+                use MonkeysLegion\Repository\EntityRepository;
+                use App\Entity\\{$entity};
 
-/**
- * @extends EntityRepository<{$entity}>
- */
-class {$entity}Repository extends EntityRepository
-{
-    protected string \$table       = '$table';
-    protected string \$entityClass = {$entity}::class;
+                /**
+                 * @extends EntityRepository<{$entity}>
+                 */
+                class {$entity}Repository extends EntityRepository
+                {
+                    protected string \$table       = '$table';
+                    protected string \$entityClass = {$entity}::class;
 
-    /**
-     * Shortcut that keeps return type specific to {$entity}.
-     *
-     * @param array<string,mixed> \$criteria
-     * @return {$entity}[]
-     */
-    public function findAll(array \$criteria = []): array
-    {
-        /** @var {$entity}[] \$result */
-        \$result = parent::findAll(\$criteria);
-        return \$result;
-    }
+                    /**
+                     * Shortcut that keeps return type specific to {$entity}.
+                     *
+                     * @param array<string,mixed> \$criteria
+                     * @return {$entity}[]
+                     */
+                    public function findAll(array \$criteria = []): array
+                    {
+                        /** @var {$entity}[] \$result */
+                        \$result = parent::findAll(\$criteria);
+                        return \$result;
+                    }
 
-    /**
-     * Typed wrapper around parent::findOneBy().
-     *
-     * @param array<string,mixed> \$criteria
-     */
-    public function findOneBy(array \$criteria): ?{$entity}
-    {
-        /** @var ?{$entity} \$result */
-        \$result = parent::findOneBy(\$criteria);
-        return \$result;
-    }
-}
-PHP;
+                    /**
+                     * Typed wrapper around parent::findOneBy().
+                     *
+                     * @param array<string,mixed> \$criteria
+                     */
+                    public function findOneBy(array \$criteria): ?{$entity}
+                    {
+                        /** @var ?{$entity} \$result */
+                        \$result = parent::findOneBy(\$criteria);
+                        return \$result;
+                    }
+                }
+                    
+                PHP;
 
         file_put_contents($file, $code);
         $this->info("✅  Created stub $file");
@@ -710,5 +728,25 @@ PHP;
             preg_replace('/([a-z])([A-Z])/', '\$1_\$2', $class)
         );
     }
-    
+
+    /**
+     * Insert a string before the constructor in the class body.
+     *
+     * This method uses a regular expression to find the constructor definition
+     * and inserts the provided string before it.
+     *
+     * @param string $body  The class body where the constructor is located.
+     * @param string $inject The string to insert before the constructor.
+     *
+     * @return string The modified class body with the injected string.
+     */
+    private function insertBeforeConstructor(string $body, string $inject): string
+    {
+        return preg_replace(
+            '/(public function __construct\(\)\s*\{)/',
+            preg_replace('/^ {4}/', '', $inject) . "\n\n    $1",
+            $body,
+            1
+        );
+    }
 }
