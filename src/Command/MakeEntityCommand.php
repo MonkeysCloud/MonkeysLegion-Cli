@@ -10,6 +10,7 @@ use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Entity\Attributes\JoinTable;
 use Doctrine\Inflector\Inflector;
 use Doctrine\Inflector\InflectorFactory;
+use MonkeysLegion\Cli\Helpers\Identifier;
 
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
 final class MakeEntityCommand extends Command
@@ -26,6 +27,12 @@ final class MakeEntityCommand extends Command
 
     /** DB type → PHP type */
     private array $phpTypeMap;
+
+    /** @var array<string, string> Field names in the current entity */
+    protected array $fieldNames = [];
+
+    /** @var array<string, string> Relationship names in the current entity */
+    protected array $relNames = [];
 
     public function __construct(
         private EntityConfig $config,
@@ -81,14 +88,16 @@ final class MakeEntityCommand extends Command
 
         /* 3️⃣  scan existing props */
         $src = file_get_contents($file);
-        preg_match_all('/#\[Field.+\$([A-Za-z0-9_]+)/',                $src, $m);
+        preg_match_all('/#\[Field[^\]]*\]\s+public\s+(?:[^\$]*\s)?\$([A-Za-z0-9_]+)/m', $src, $m);
         $existingFields = $m[1] ?? [];
-        preg_match_all('/#\[(OneToOne|OneToMany|ManyToOne|ManyToMany).+\$([A-Za-z0-9_]+)/', $src, $m);
+        preg_match_all('/#\[(OneToOne|OneToMany|ManyToOne|ManyToMany)[^\]]*\]\s+public\s+(?:[^\$]*\s)?\$([A-Za-z0-9_]+)/m', $src, $m);
         $existingRels = $m[2] ?? [];
 
-        $newFields = $newRels = [];
+        /* 34️⃣  prepare existing props */
+        $existingFields = array_fill_keys($existingFields, []);
+        $existingRels   = array_fill_keys($existingRels, []);
 
-        /* 4️⃣  wizard */
+        /* 5️⃣  wizard */
         menu:
         $this->info("\n===== Make Entity: $name =====");
         $this->line("[1] Add field");
@@ -96,10 +105,10 @@ final class MakeEntityCommand extends Command
         $this->line("[3] Finish & save");
         switch ($this->ask('Choose option 1-3')) {
             case '1':
-                $this->wizardField($existingFields, $newFields);
+                $this->wizardField($existingFields);
                 goto menu;
             case '2':
-                $this->wizardRelation($existingRels, $newRels, $name);
+                $this->wizardRelation($existingRels, $name);
                 goto menu;
             case '3':
                 break;
@@ -107,17 +116,17 @@ final class MakeEntityCommand extends Command
                 $this->error('Enter 1, 2 or 3');
                 goto menu;
         }
-        if (!$newFields && !$newRels) {
+        if (!$this->fieldNames && !$this->relNames) {
             $this->info('No changes.');
             return self::SUCCESS;
         }
 
-        /* 5️⃣  build fragments */
+        /* 6️⃣  build fragments */
         $props = $ctors = $methods = [];
-        foreach ($newFields as $p => $t) {
+        foreach ($this->fieldNames as $p => $t) {
             $this->emitField($p, $t, $props, $methods);
         }
-        foreach ($newRels as $p => $m) {
+        foreach ($this->relNames as $p => $m) {
             $this->emitRelation(
                 $p,
                 $m['attr'],
@@ -131,8 +140,7 @@ final class MakeEntityCommand extends Command
             );
         }
 
-        /* 6️⃣  inject into file */
-        /* 6️⃣  inject into file */
+        /* 7️⃣  inject into file */
         $code = file_get_contents($file);
         if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
             // Use your insertBeforeConstructor method for properties
@@ -156,7 +164,7 @@ final class MakeEntityCommand extends Command
         }
         $this->info("✅  Updated $file");
 
-        /* 7️⃣  inverse patch */
+        /* 8️⃣  inverse patch */
         $this->applyInverseQueue();
         return self::SUCCESS;
     }
@@ -165,19 +173,26 @@ final class MakeEntityCommand extends Command
      * Prompt the user for a field name and type.
      *
      * @param array $existing Existing properties to check against.
-     * @param array &$out      Output array to store the new property.
      */
-    private function wizardField(array $existing, array &$out): void
+    private function wizardField(array $existing): void
     {
         $prop = $this->ask('  Field name: ');
-        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
-        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
+
+        if (!Identifier::isValid($prop)) {
             $this->error('Invalid.');
+            return;
+        }
+        if (isset($existing[$prop])) {
+            $this->error("Field '$prop' already exists in the class.");
+            return;
+        }
+        if (isset($this->fieldNames[$prop])) {
+            $this->error("Field '$prop' already added during this wizard session.");
             return;
         }
 
         $type = $this->chooseOption('field', $this->fieldTypes);
-        $out[$prop] = $type;
+        $this->fieldNames[$prop] = $type;
         $this->info("  ➕  $prop:$type added.");
     }
 
@@ -190,7 +205,6 @@ final class MakeEntityCommand extends Command
      */
     private function wizardRelation(
         array $existing,
-        array &$out,
         string $selfClass
     ): void {
         $kind = $this->chooseOption('relation', array_keys($this->relTypes));
@@ -202,7 +216,10 @@ final class MakeEntityCommand extends Command
             glob(base_path('app/Entity') . '/*.php')
         );
         $target = $this->ask('  Target entity');
-        if ($target === '') return;
+        if (!Identifier::isValid($target)) {
+            $this->error('Invalid entity name.');
+            return;
+        }
 
         $short = str_contains($target, '\\') ? substr($target, strrpos($target, '\\') + 1) : $target;
         $fqcn  = str_contains($target, '\\') ? $target : "App\\Entity\\$target";
@@ -235,7 +252,7 @@ final class MakeEntityCommand extends Command
             }
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
-        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
+        if ($prop === '' || isset($existing[$prop]) || isset($this->relNames[$prop])) return;
 
         /* inverse side? */
         $inverseProp = null;
@@ -261,7 +278,7 @@ final class MakeEntityCommand extends Command
             );
         }
 
-        $out[$prop] = [
+        $this->relNames[$prop] = [
             'attr'       => $attr,
             'target'     => $fqcn,
             'other_prop' => $inverseProp,
