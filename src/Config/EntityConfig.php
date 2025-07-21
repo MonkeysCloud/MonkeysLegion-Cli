@@ -9,7 +9,7 @@ namespace MonkeysLegion\Cli\Config;
  */
 class EntityConfig
 {
-    
+
     public function __construct(
         public readonly FieldTypeConfig $fieldTypes,
         public readonly PhpTypeMap $phpTypeMap,

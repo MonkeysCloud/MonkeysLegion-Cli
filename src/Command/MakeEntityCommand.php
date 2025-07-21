@@ -10,6 +10,8 @@ use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Entity\Attributes\JoinTable;
 use Doctrine\Inflector\Inflector;
 use Doctrine\Inflector\InflectorFactory;
+use MonkeysLegion\Cli\Config\FieldType;
+use MonkeysLegion\Cli\Config\RelationKind;
 use MonkeysLegion\Cli\Helpers\Identifier;
 
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
@@ -19,14 +21,19 @@ final class MakeEntityCommand extends Command
     /** @var string[] DB scalar types offered in the wizard */
     private array $fieldTypes;
 
-    /** CLI keyword → attribute class */
-    private array $relTypes;
+    private object $relTypes;
 
-    /** owning-side attribute → inverse attribute */
-    private array $inverseMap;
+    /** 
+     * Maps each owning-side relation kind (e.g., ONE_TO_MANY) 
+     * to its corresponding inverse relation kind (e.g., MANY_TO_ONE). 
+     */
+    private object $inverseMap;
 
-    /** DB type → PHP type */
-    private array $phpTypeMap;
+    /** 
+     * Maps DB field types (e.g., "string", "json") 
+     * to their corresponding PHP native types (e.g., "string", "array"). 
+     */
+    private object $phpTypeMap;
 
     /** @var array<string, string> Field names in the current entity */
     protected array $fieldNames = [];
@@ -40,9 +47,13 @@ final class MakeEntityCommand extends Command
         parent::__construct();
 
         $this->fieldTypes = $this->config->fieldTypes->all();
-        $this->relTypes = $this->config->relationKeywordMap->all();
-        $this->inverseMap = $this->config->relationInverseMap->all();
-        $this->phpTypeMap = $this->config->phpTypeMap->all();
+        $this->fieldTypes = array_map(fn(FieldType $case) => $case->value, $this->fieldTypes);
+
+        $this->relTypes = $this->config->relationKeywordMap;;
+
+        $this->inverseMap = $this->config->relationInverseMap;
+
+        $this->phpTypeMap = $this->config->phpTypeMap;
     }
 
     /* helpers */
@@ -207,8 +218,10 @@ final class MakeEntityCommand extends Command
         array $existing,
         string $selfClass
     ): void {
-        $kind = $this->chooseOption('relation', array_keys($this->relTypes));
-        $attr = $this->relTypes[$kind];
+        $opts = $this->relTypes->all();
+        $kind = $this->chooseOption('relation', array_keys($opts));
+        $relCase = $this->relTypes->tryFrom($kind);
+        $attr = $this->relTypes->getAttribute($relCase);
 
         /* target entity */
         $this->completions = array_map(
@@ -257,7 +270,8 @@ final class MakeEntityCommand extends Command
         /* inverse side? */
         $inverseProp = null;
         if (strtolower($this->ask('  Generate inverse side in target? [y/N]')) === 'y') {
-            $invAttr = $this->inverseMap[$attr];
+            $invRelationKind = $this->inverseMap->getInverse($relCase);
+            $invAttr = $invRelationKind->value;
             $base = lcfirst($selfClass);
             if (in_array($invAttr, ['OneToMany', 'ManyToMany'], true)) {
                 // proper plural, e.g. “companies”
@@ -307,8 +321,13 @@ final class MakeEntityCommand extends Command
         array  &$props,
         array  &$meth
     ): void {
-        // Map DB type → PHP type (fallback to raw $db)
-        $type  = $this->phpTypeMap[$db] ?? $db;
+        $fieldType = FieldType::tryFrom($db);
+        if (!$fieldType) {
+            $this->error("Unknown field type '$db'.");
+            return;
+        }
+
+        $type = $this->phpTypeMap->map($fieldType);
         $Stud  = ucfirst($prop);
 
         // ─────────── property & attribute ───────────
