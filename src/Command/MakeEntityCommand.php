@@ -11,8 +11,15 @@ use MonkeysLegion\Entity\Attributes\JoinTable;
 use Doctrine\Inflector\Inflector;
 use Doctrine\Inflector\InflectorFactory;
 use MonkeysLegion\Cli\Config\FieldType;
-use MonkeysLegion\Cli\Config\RelationKind;
 use MonkeysLegion\Cli\Helpers\Identifier;
+
+enum CompletionContext: string
+{
+    case ENTITY = 'entity';
+    case FIELD = 'field';
+    case RELATION = 'relation';
+    case DEFAULT = 'default';
+}
 
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
 final class MakeEntityCommand extends Command
@@ -57,7 +64,8 @@ final class MakeEntityCommand extends Command
     }
 
     /* helpers */
-    private array $completions  = [];
+    private string $completionContext = CompletionContext::DEFAULT->value;
+    private array $contextAwareCompletions = [];
     private array $inverseQueue = [];
 
     /** @var Inflector */
@@ -76,21 +84,35 @@ final class MakeEntityCommand extends Command
     protected function handle(): int
     {
         if (function_exists('readline_completion_function')) {
-            readline_completion_function([$this, 'readlineComplete']);
+            readline_completion_function([$this, 'contextAwareCompleter']);
         }
 
         $this->inflector = InflectorFactory::create()->build();
+        $dir  = base_path('app/Entity');
+        @mkdir($dir, 0755, true);
+
+        /* 0️⃣  prepare entities name */
+        $entityFiles = glob($dir . '/*.php');
+        $entities = [];
+        foreach ($entityFiles as $filePath) {
+            // Get filename without extension, e.g. User.php -> User
+            $fileName = basename($filePath, '.php');
+            $entities[$fileName] = $fileName;
+        }
+        $this->setCompletionContext(CompletionContext::ENTITY, array_keys($entities));
 
         /* 1️⃣  entity name */
         $name = $_SERVER['argv'][2] ?? $this->ask('Enter entity name (e.g. User)');
         if (!preg_match('/^[A-Z][A-Za-z0-9]+$/', $name)) {
             return $this->fail('Invalid class name – must start with uppercase.');
         }
+        if (!isset($entities[$name])) {
+            $entities[$name] = $name;
+            $this->setCompletionContext(CompletionContext::FIELD, array_keys($entities));
+        }
 
         /* 2️⃣  ensure file exists */
-        $dir  = base_path('app/Entity');
         $file = "$dir/$name.php";
-        @mkdir($dir, 0755, true);
         if (!is_file($file)) {
             $this->createStub($name, $file);
             $this->info("✅  Created stub $file");
@@ -187,6 +209,7 @@ final class MakeEntityCommand extends Command
      */
     private function wizardField(array $existing): void
     {
+        $this->setCompletionContext(CompletionContext::DEFAULT, []);
         $prop = $this->ask('  Field name: ');
 
         if (!Identifier::isValid($prop)) {
@@ -202,6 +225,7 @@ final class MakeEntityCommand extends Command
             return;
         }
 
+        $this->setCompletionContext(CompletionContext::FIELD, $this->fieldTypes);
         $type = $this->chooseOption('field', $this->fieldTypes);
         $this->fieldNames[$prop] = $type;
         $this->info("  ➕  $prop:$type added.");
@@ -219,15 +243,17 @@ final class MakeEntityCommand extends Command
         string $selfClass
     ): void {
         $opts = $this->relTypes->all();
+        $this->setCompletionContext(CompletionContext::RELATION, array_keys($opts));
         $kind = $this->chooseOption('relation', array_keys($opts));
         $relCase = $this->relTypes->tryFrom($kind);
         $attr = $this->relTypes->getAttribute($relCase);
 
         /* target entity */
-        $this->completions = array_map(
+        $entities = array_map(
             fn($f) => basename($f, '.php'),
             glob(base_path('app/Entity') . '/*.php')
         );
+        $this->setCompletionContext(CompletionContext::ENTITY, $entities);
         $target = $this->ask('  Target entity');
         if (!Identifier::isValid($target)) {
             $this->error('Invalid entity name.');
@@ -593,7 +619,89 @@ final class MakeEntityCommand extends Command
      */
     public function readlineComplete(string $in, int $i): array
     {
-        $opts = array_filter($this->completions, fn($o) => $this->fuzzyMatch($in, $o));
+        $opts = array_filter($this->contextAwareCompletions[$this->completionContext] ?? [], fn($o) => $this->fuzzyMatch($in, $o));
+        $count = count($opts);
+
+        if ($count > 0) {
+            usort($opts, function ($a, $b) use ($in) {
+                similar_text($in, $b, $percentB);
+                similar_text($in, $a, $percentA);
+                return $percentB <=> $percentA;
+            });
+
+            echo PHP_EOL . "Suggestions: " . implode(" | ", $opts) . PHP_EOL;
+            echo "> " . $in;
+        }
+
+        return $count >= 1 ? [$in, ...$opts] : [$in];
+    }
+
+    /**
+     * Single completer that adapts based on current context
+     */
+    public function contextAwareCompleter(string $input, int $index): array
+    {
+        switch ($this->completionContext) {
+            case CompletionContext::ENTITY->value:
+                return $this->completeEntityName($input, $index);
+            case CompletionContext::FIELD->value:
+                return $this->readlineComplete($input, $index);
+            case CompletionContext::RELATION->value:
+                return $this->readlineComplete($input, $index);
+            default:
+                return [];
+        }
+    }
+
+    private function setCompletionContext(CompletionContext $context, array $completions = []): void
+    {
+        $this->completionContext = $context->value;
+        $this->contextAwareCompletions[$context->value] = $completions;
+    }
+
+    /**
+     * Completes entity names based on the input.
+     *
+     * This method provides suggestions for entity names based on the input string.
+     * It uses various inflection methods to generate possible variants of the input.
+     *
+     * @param string $in The input string to complete.
+     * @param int $i The index of the input (not used here).
+     * @return array An array of suggestions including the original input.
+     */
+    public function completeEntityName(string $in, int $i): array
+    {
+        $returnOpts = $this->contextAwareCompletions[CompletionContext::ENTITY->value] ?? [];
+        if (empty($returnOpts)) {
+            return [$in];
+        }
+        if (empty($in)) {
+            echo PHP_EOL . "Suggestions: " . implode(" | ", $returnOpts) . PHP_EOL;
+            echo "> " . $in;
+            return $returnOpts;
+        }
+
+        $inputVariants = [
+            $in,
+            $this->inflector->tableize($in),
+            $this->inflector->classify($in),
+            $this->inflector->pluralize($in),
+            $this->inflector->pluralize($this->inflector->tableize($in)),
+            $this->inflector->classify($this->inflector->pluralize($in)),
+        ];
+
+        $opts = array_filter($returnOpts, function ($entity) use ($inputVariants) {
+            $normalizedEntity = strtolower($this->inflector->tableize($entity));
+            foreach ($inputVariants as $variant) {
+                if ($variant === null) continue;
+                $variantNorm = strtolower($variant);
+                if (strpos($normalizedEntity, $variantNorm) !== false) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
         $count = count($opts);
 
         if ($count > 0) {
@@ -632,7 +740,6 @@ final class MakeEntityCommand extends Command
     private function chooseOption(string $kind, array $opts): string
     {
         foreach ($opts as $i => $o) $this->line(sprintf("  [%2d] %s", $i + 1, $o));
-        $this->completions = $opts;
         while (true) {
             $sel = $this->ask("Select $kind");
             if (ctype_digit($sel) && isset($opts[$sel - 1])) return $opts[$sel - 1];
