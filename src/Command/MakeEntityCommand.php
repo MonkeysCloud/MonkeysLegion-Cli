@@ -593,15 +593,33 @@ final class MakeEntityCommand extends Command
      */
     public function readlineComplete(string $in, int $i): array
     {
-        $opts = array_filter($this->completions, fn($o) => str_starts_with($o, $in));
+        $opts = array_filter($this->completions, fn($o) => $this->fuzzyMatch($in, $o));
         $count = count($opts);
 
-        if ($count >= 1) {
-            echo PHP_EOL . implode(" | ", $opts) . PHP_EOL;
+        if ($count > 0) {
+            usort($opts, function ($a, $b) use ($in) {
+                similar_text($in, $b, $percentB);
+                similar_text($in, $a, $percentA);
+                return $percentB <=> $percentA;
+            });
+
+            echo PHP_EOL . "Suggestions: " . implode(" | ", $opts) . PHP_EOL;
             echo "> " . $in;
         }
 
         return $count >= 1 ? [$in, ...$opts] : [$in];
+    }
+
+    /**
+     * Checks if the input string matches any of the options in a fuzzy manner.
+     *
+     * @param string $input The input string to match against options.
+     * @param string $option The option to check against.
+     * @return bool True if the input matches the option, false otherwise.
+     */
+    private function fuzzyMatch(string $input, string $option): bool
+    {
+        return stripos($option, $input) !== false;
     }
 
     /**
