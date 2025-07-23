@@ -14,7 +14,8 @@
     "monkeyscloud/monkeyslegion-di": "dev-main",
     "monkeyscloud/monkeyslegion-entity": "^1.0@dev",
     "monkeyscloud/monkeyslegion": "^1.0@dev",
-    "doctrine/inflector": "^2.0"
+    "doctrine/inflector": "^2.0",
+    "nikic/php-parser": "^5.5"
   },
   "autoload": {
     "psr-4": {
@@ -28,5 +29,8 @@
     "branch-alias": {
       "dev-main": "1.0-dev"
     }
+  },
+  "require-dev": {
+    "phpstan/phpstan": "^2.1"
   }
 }
