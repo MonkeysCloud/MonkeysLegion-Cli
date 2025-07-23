@@ -10,12 +10,12 @@
     "ext-ctype": "*",
     "ext-readline": "*",
     "ext-pdo": "*",
-    "monkeyscloud/monkeyslegion-core": "^1.0@dev",
-    "monkeyscloud/monkeyslegion-di": "dev-main",
-    "monkeyscloud/monkeyslegion-entity": "^1.0@dev",
-    "monkeyscloud/monkeyslegion": "^1.0@dev",
-    "doctrine/inflector": "^2.0",
-    "nikic/php-parser": "^5.5"
+    "nikic/php-parser": "^5.5",
+    "monkeyscloud/monkeyslegion-core": "^1.0",
+    "monkeyscloud/monkeyslegion-di": "^1.0",
+    "monkeyscloud/monkeyslegion-entity": "^1.0",
+    "monkeyscloud/monkeyslegion": "^1.0",
+    "doctrine/inflector": "^2.0"
   },
   "autoload": {
     "psr-4": {
@@ -27,7 +27,7 @@
   ],
   "extra": {
     "branch-alias": {
-      "dev-main": "1.0-dev"
+      "dev-main": "1.0.x-dev"
     }
   },
   "require-dev": {
