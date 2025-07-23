@@ -2,6 +2,7 @@
 
 namespace MonkeysLegion\Cli\Service;
 
+use MonkeysLegion\Cli\Config\RelationKind;
 use PhpParser\ParserFactory;
 use PhpParser\BuilderFactory;
 use PhpParser\PrettyPrinter\Standard;
@@ -21,6 +22,10 @@ class ClassManipulator
     private $ast;
     private $classNode;
     private $file;
+    private array $owningShouldBePlural = [
+        RelationKind::MANY_TO_ONE->value,
+        RelationKind::MANY_TO_MANY->value,
+    ];
 
     public function __construct(string $file)
     {
@@ -87,25 +92,36 @@ class ClassManipulator
         }
 
         $args = [
-            new Node\Arg(new Node\Expr\ClassConstFetch(
-                new Node\Name($targetShort),
-                'class'
-            ), false, false, [], new Node\Identifier('targetEntity'))
+            new Node\Arg(
+                new Node\Expr\ClassConstFetch(new Node\Name($targetShort), 'class'),
+                false,
+                false,
+                [],
+                new Node\Identifier('targetEntity')
+            )
         ];
-
-        if ($attr === 'OneToOne' && $inverseO2O && $otherProp) {
-            $args[] = new Node\Arg(new Node\Scalar\String_($otherProp), false, false, [], new Node\Identifier('mappedBy'));
+        if ($attr === RelationKind::ONE_TO_ONE->value && $inverseO2O && $otherProp) {
+            $args[] = new Node\Arg(
+                new Node\Scalar\String_($otherProp),
+                false,
+                false,
+                [],
+                new Node\Identifier('mappedBy')
+            );
         } elseif ($otherProp) {
             $args[] = new Node\Arg(
                 new Node\Scalar\String_($otherProp),
                 false,
                 false,
                 [],
-                new Node\Identifier(in_array($attr, ['OneToMany', 'ManyToMany']) ? 'mappedBy' : 'inversedBy')
+                new Node\Identifier(
+                    in_array($attr, $this->owningShouldBePlural, true)
+                        ? 'mappedBy'
+                        : 'inversedBy'
+                )
             );
         }
-
-        if ($attr === 'ManyToMany' && $joinTable) {
+        if ($attr === RelationKind::MANY_TO_MANY->value && $joinTable) {
             $args[] = new Node\Arg(
                 new Node\Expr\New_(
                     new Node\Name('JoinTable'),
@@ -122,7 +138,8 @@ class ClassManipulator
             );
         }
 
-        $attrNode = $this->builderFactory->attribute(ucfirst($attr), $args);
+        $attrNode = $this->builderFactory->attribute($attr, $args);
+
         $type = $isMany ? 'array' : '?' . $targetShort;
         $propBuilder = $this->builderFactory->property($name)
             ->makePublic()
@@ -131,22 +148,18 @@ class ClassManipulator
 
         if ($isMany) {
             $propBuilder->setDefault([]);
+        } else {
+            $propBuilder->setDefault(null);
         }
 
         $prop = $propBuilder->getNode();
         $this->removeProperty($name);
         $this->insertProperty($prop);
 
-        // Generate methods
-        $this->generateRelationMethods($name, $targetShort, $isMany);
-    }
-
-    private function generateRelationMethods(string $name, string $targetShort, bool $isMany)
-    {
+        // Methods
         $stud = ucfirst($name);
-
         if ($isMany) {
-            // Add method
+            // add
             $add = $this->builderFactory->method('add' . $targetShort)
                 ->makePublic()
                 ->setReturnType('self')
@@ -161,7 +174,7 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($add);
 
-            // Remove method
+            // remove
             $remove = $this->builderFactory->method('remove' . $targetShort)
                 ->makePublic()
                 ->setReturnType('self')
@@ -184,7 +197,7 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($remove);
 
-            // Getter
+            // getter
             $getter = $this->builderFactory->method('get' . $stud)
                 ->makePublic()
                 ->setReturnType('array')
@@ -194,7 +207,7 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($getter);
         } else {
-            // Getter
+            // getter
             $getter = $this->builderFactory->method('get' . $stud)
                 ->makePublic()
                 ->setReturnType($targetShort)
@@ -204,7 +217,7 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($getter);
 
-            // Setter
+            // setter
             $setter = $this->builderFactory->method('set' . $stud)
                 ->makePublic()
                 ->setReturnType('self')
@@ -217,14 +230,16 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($setter);
 
-            // Remove method
+            // remove/unset
             $remove = $this->builderFactory->method('remove' . $stud)
                 ->makePublic()
                 ->setReturnType('self')
-                ->addStmt(new Node\Expr\Assign(
-                    new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
-                    new Node\Expr\ConstFetch(new Node\Name('null'))
-                ))
+                ->addStmt(
+                    new Node\Expr\Assign(
+                        new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
+                        new Node\Expr\ConstFetch(new Node\Name('null'))
+                    )
+                )
                 ->addStmt(new Node\Stmt\Return_(new Node\Expr\Variable('this')))
                 ->getNode();
             $this->insertMethod($remove);
