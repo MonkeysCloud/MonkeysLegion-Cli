@@ -11,7 +11,6 @@ use PhpParser\Node\Stmt\Property;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node;
 use MonkeysLegion\Entity\Attributes\JoinTable;
-use PhpParser\Node\Stmt\Nop;
 
 class ClassManipulator
 {
@@ -22,35 +21,28 @@ class ClassManipulator
     private $ast;
     private $classNode;
     private $file;
-    private $oldStmts;
-    private $oldTokens;
 
     public function __construct(string $file)
     {
-        //TODO: Still needs refactoring and ensuring psr-12 compliance
         $this->parser = (new ParserFactory())->createForNewestSupportedVersion();
         $this->builderFactory = new BuilderFactory();
         $this->prettyPrinter = new Standard();
         $this->nodeFinder = new NodeFinder();
         $this->file = $file;
+
         $src = file_exists($file) ? file_get_contents($file) : '';
         $this->ast = $src ? $this->parser->parse($src) : null;
         $this->classNode = $this->ast ? $this->nodeFinder->findFirstInstanceOf($this->ast, Class_::class) : null;
-        // Store original statements and tokens for format-preserving printing
-        $this->oldStmts = $this->ast;
-        $this->oldTokens = $src ? $this->parser->getTokens() : [];
     }
 
     public function addScalarField(string $name, string $dbType, string $phpType)
     {
-        $type = ltrim($phpType, '?');
-
         $attr = $this->builderFactory->attribute('Field', ['type' => $dbType]);
-        $propBuilder = $this->builderFactory->property($name)
+        $prop = $this->builderFactory->property($name)
             ->makePublic()
-            ->setType($type)
-            ->addAttribute($attr);
-        $prop = $propBuilder->getNode();
+            ->setType($phpType)
+            ->addAttribute($attr)
+            ->getNode();
 
         $this->removeProperty($name);
         $this->insertProperty($prop);
@@ -58,7 +50,7 @@ class ClassManipulator
         // Getter
         $getter = $this->builderFactory->method('get' . ucfirst($name))
             ->makePublic()
-            ->setReturnType($type)
+            ->setReturnType($phpType)
             ->addStmt(new Node\Stmt\Return_(
                 new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name)
             ))
@@ -70,7 +62,7 @@ class ClassManipulator
         $setter = $this->builderFactory->method('set' . ucfirst($name))
             ->makePublic()
             ->setReturnType('self')
-            ->addParam($this->builderFactory->param($name)->setType($type))
+            ->addParam($this->builderFactory->param($name)->setType($phpType))
             ->addStmt(new Node\Expr\Assign(
                 new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
                 new Node\Expr\Variable($name)
@@ -90,7 +82,6 @@ class ClassManipulator
         ?JoinTable $joinTable = null,
         bool $inverseO2O = false
     ) {
-        // Only allow valid class names for targetEntity
         if (!preg_match('/^[A-Z][A-Za-z0-9_]*$/', $targetShort)) {
             return;
         }
@@ -101,6 +92,7 @@ class ClassManipulator
                 'class'
             ), false, false, [], new Node\Identifier('targetEntity'))
         ];
+
         if ($attr === 'OneToOne' && $inverseO2O && $otherProp) {
             $args[] = new Node\Arg(new Node\Scalar\String_($otherProp), false, false, [], new Node\Identifier('mappedBy'));
         } elseif ($otherProp) {
@@ -112,6 +104,7 @@ class ClassManipulator
                 new Node\Identifier(in_array($attr, ['OneToMany', 'ManyToMany']) ? 'mappedBy' : 'inversedBy')
             );
         }
+
         if ($attr === 'ManyToMany' && $joinTable) {
             $args[] = new Node\Arg(
                 new Node\Expr\New_(
@@ -128,10 +121,8 @@ class ClassManipulator
                 new Node\Identifier('joinTable')
             );
         }
-        // Ensure attribute name is correct case
-        $attrNode = $this->builderFactory->attribute(ucfirst($attr), $args);
 
-        // Property
+        $attrNode = $this->builderFactory->attribute(ucfirst($attr), $args);
         $type = $isMany ? 'array' : '?' . $targetShort;
         $propBuilder = $this->builderFactory->property($name)
             ->makePublic()
@@ -141,17 +132,21 @@ class ClassManipulator
         if ($isMany) {
             $propBuilder->setDefault([]);
         }
-        $prop = $propBuilder->getNode();
 
-        // Remove any existing property with same name
+        $prop = $propBuilder->getNode();
         $this->removeProperty($name);
         $this->insertProperty($prop);
-        $this->insertStatementBeforeFirstMethod(new Nop()); // Blank line after
 
-        // Methods
+        // Generate methods
+        $this->generateRelationMethods($name, $targetShort, $isMany);
+    }
+
+    private function generateRelationMethods(string $name, string $targetShort, bool $isMany)
+    {
         $stud = ucfirst($name);
+
         if ($isMany) {
-            // add
+            // Add method
             $add = $this->builderFactory->method('add' . $targetShort)
                 ->makePublic()
                 ->setReturnType('self')
@@ -166,7 +161,7 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($add);
 
-            // remove
+            // Remove method
             $remove = $this->builderFactory->method('remove' . $targetShort)
                 ->makePublic()
                 ->setReturnType('self')
@@ -175,28 +170,21 @@ class ClassManipulator
                     new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
                     new Node\Expr\FuncCall(new Node\Name('array_filter'), [
                         new Node\Arg(new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name)),
-                        new Node\Arg(
-                            new Node\Expr\Closure([
-                                'params' => [new Node\Param(new Node\Expr\Variable('i')), new Node\Param(new Node\Expr\Variable('item'))],
-                                'stmts' => [
-                                    new Node\Stmt\Return_(
-                                        new Node\Expr\BinaryOp\NotIdentical(
-                                            new Node\Expr\Variable('i'),
-                                            new Node\Expr\Variable('item')
-                                        )
-                                    )
-                                ],
-                                'static' => false,
-                                'uses' => [new Node\Expr\Variable('item')]
-                            ])
-                        )
+                        new Node\Arg(new Node\Expr\ArrowFunction([
+                            'params' => [new Node\Param(new Node\Expr\Variable('i'))],
+                            'expr' => new Node\Expr\BinaryOp\NotIdentical(
+                                new Node\Expr\Variable('i'),
+                                new Node\Expr\Variable('item')
+                            ),
+                            'static' => false
+                        ]))
                     ])
                 ))
                 ->addStmt(new Node\Stmt\Return_(new Node\Expr\Variable('this')))
                 ->getNode();
             $this->insertMethod($remove);
 
-            // getter
+            // Getter
             $getter = $this->builderFactory->method('get' . $stud)
                 ->makePublic()
                 ->setReturnType('array')
@@ -206,7 +194,7 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($getter);
         } else {
-            // getter
+            // Getter
             $getter = $this->builderFactory->method('get' . $stud)
                 ->makePublic()
                 ->setReturnType($targetShort)
@@ -216,7 +204,7 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($getter);
 
-            // setter
+            // Setter
             $setter = $this->builderFactory->method('set' . $stud)
                 ->makePublic()
                 ->setReturnType('self')
@@ -229,16 +217,14 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($setter);
 
-            // remove/unset
+            // Remove method
             $remove = $this->builderFactory->method('remove' . $stud)
                 ->makePublic()
                 ->setReturnType('self')
-                ->addStmt(
-                    new Node\Expr\Assign(
-                        new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
-                        new Node\Expr\ConstFetch(new Node\Name('null'))
-                    )
-                )
+                ->addStmt(new Node\Expr\Assign(
+                    new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
+                    new Node\Expr\ConstFetch(new Node\Name('null'))
+                ))
                 ->addStmt(new Node\Stmt\Return_(new Node\Expr\Variable('this')))
                 ->getNode();
             $this->insertMethod($remove);
@@ -248,85 +234,111 @@ class ClassManipulator
     private function removeProperty(string $name)
     {
         $stmts = &$this->classNode->stmts;
-        $stmts = array_filter($stmts, function ($stmt) use ($name) {
+        $stmts = array_values(array_filter($stmts, function ($stmt) use ($name) {
             return !($stmt instanceof Property && $stmt->props[0]->name->name === $name);
-        });
+        }));
     }
 
     private function insertProperty(Property $prop)
     {
-        $this->insertStatementBeforeFirstMethod($prop);
-    }
-
-    private function ensureSingleBlankLineBetweenMethods()
-    {
         $stmts = &$this->classNode->stmts;
-        $newStmts = [];
-        $prevWasMethod = false;
-        foreach ($stmts as $stmt) {
-            if ($stmt instanceof Node\Stmt\Nop) {
-                // Only insert blank line if previous was a method and next is a method
-                continue;
-            }
-            if ($prevWasMethod && $stmt instanceof ClassMethod) {
-                $newStmts[] = new Node\Stmt\Nop();
-            }
-            $newStmts[] = $stmt;
-            $prevWasMethod = $stmt instanceof ClassMethod;
-        }
-        $stmts = $newStmts;
+        $insertIndex = $this->findPropertyInsertionPoint($stmts);
+        array_splice($stmts, $insertIndex, 0, [$prop]);
     }
 
     private function insertMethod(ClassMethod $method)
     {
         $stmts = &$this->classNode->stmts;
-        $idx = count($stmts);
-        $hasCtor = false;
+        $insertIndex = $this->findMethodInsertionPoint($stmts);
+        array_splice($stmts, $insertIndex, 0, [$method]);
+    }
+
+    private function findPropertyInsertionPoint(array $stmts): int
+    {
+        $lastPropertyIndex = -1;
         foreach ($stmts as $i => $stmt) {
-            if ($stmt instanceof ClassMethod && $stmt->name->toString() === '__construct') {
-                $idx = $i + 1;
-                $hasCtor = true;
+            if ($stmt instanceof Property) {
+                $lastPropertyIndex = $i;
+            } elseif ($stmt instanceof ClassMethod) {
                 break;
             }
         }
-        // If no constructor, fallback to after last property
-        if (!$hasCtor) {
-            foreach ($stmts as $i => $stmt) {
-                if ($stmt instanceof Property) {
-                    $idx = $i + 1;
-                }
+        return $lastPropertyIndex + 1;
+    }
+
+    private function findMethodInsertionPoint(array $stmts): int
+    {
+        // Insert after constructor if it exists, otherwise after properties
+        foreach ($stmts as $i => $stmt) {
+            if ($stmt instanceof ClassMethod && $stmt->name->toString() === '__construct') {
+                return $i + 1;
             }
         }
 
-        array_splice($stmts, $idx, 0, [$method]);
-        $this->ensureSingleBlankLineBetweenMethods();
+        // No constructor, insert after last property
+        return $this->findPropertyInsertionPoint($stmts);
     }
 
     public function save()
     {
-        $this->ensureSingleBlankLineBetweenMethods();
-        $code = $this->prettyPrinter->printFormatPreserving(
-            $this->ast,
-            $this->oldStmts,
-            $this->oldTokens
-        );
+        $code = $this->prettyPrinter->prettyPrint($this->ast);
+        $code = $this->formatCode($code);
+
+        // Ensure the code starts with <?php
+        if (!str_starts_with($code, '<?php')) {
+            $code = "<?php\n\n" . $code;
+        }
 
         file_put_contents($this->file, $code);
     }
 
-    private function insertStatementBeforeFirstMethod(Node $stmt)
+    private function formatCode(string $code): string
     {
-        $stmts = &$this->classNode->stmts;
-        $idx = 0;
-        foreach ($stmts as $i => $node) {
-            if ($node instanceof ClassMethod) {
-                $idx = $i;
-                break;
-            }
-            if ($node instanceof Property) {
-                $idx = $i + 1;
-            }
-        }
-        array_splice($stmts, $idx, 0, [$stmt]);
+        // Fix spacing in declare statement - remove space after 'declare'
+        $code = preg_replace(
+            '/declare\s+\(\s*strict_types\s*=\s*1\s*\)\s*;/',
+            'declare(strict_types=1);',
+            $code
+        );
+
+        // Ensure single blank line after declare(strict_types=1);
+        $code = preg_replace(
+            '/(declare\(strict_types=1\);\s*)\n+/',
+            "$1\n\n",
+            $code
+        );
+
+        // Fix spacing after use statements
+        $code = preg_replace(
+            '/(use\s+[^;]+;\s*\n)(?!\s*\n)(\s*(?:#\[|\bclass\b))/m',
+            "$1\n$2",
+            $code
+        );
+
+        // Add blank lines between ALL properties (not just Field attributes)
+        $code = preg_replace(
+            '/(#\[[^\]]*\]\s*\n\s*public\s+[^;]+;)\s*\n(\s*#\[)/m',
+            "$1\n\n$2",
+            $code
+        );
+
+        // Add blank line after properties before methods
+        $code = preg_replace(
+            '/(public\s+[^;]+;)\s*\n(\s*public\s+function)/m',
+            "$1\n\n$2",
+            $code
+        );
+
+        // Ensure single blank line between methods
+        $code = preg_replace(
+            '/(\}\s*\n)(\s*public\s+function)/m',
+            "$1\n$2",
+            $code
+        );
+
+        // Remove multiple consecutive blank lines
+        $code = preg_replace('/\n{3,}/', "\n\n", $code);
+
+        return $code;
     }
 }
