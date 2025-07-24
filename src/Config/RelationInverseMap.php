@@ -2,37 +2,23 @@
 
 namespace MonkeysLegion\Cli\Config;
 
-/**
- * Maps relation keywords to their inverse relations.
- *
- * @return array<string, string>
- */
 class RelationInverseMap
 {
-    
-    /**
-     * Returns a mapping of relation keywords to their inverse relations.
-     *
-     * @return array<string, string>
-     */
+    /** @var array<RelationKind, RelationKind> */
+    private array $map = [
+        RelationKind::ONE_TO_ONE->value   => RelationKind::ONE_TO_ONE,
+        RelationKind::MANY_TO_ONE->value  => RelationKind::ONE_TO_MANY,
+        RelationKind::ONE_TO_MANY->value  => RelationKind::MANY_TO_ONE,
+        RelationKind::MANY_TO_MANY->value => RelationKind::MANY_TO_MANY,
+    ];
+
     public function all(): array
     {
-        return [
-            'OneToOne'   => 'OneToOne',
-            'ManyToOne'  => 'OneToMany',
-            'OneToMany'  => 'ManyToOne',
-            'ManyToMany' => 'ManyToMany',
-        ];
+        return $this->map;
     }
 
-    /**
-     * Gets the inverse relation for a given owning side.
-     *
-     * @param string $owningSide The owning side relation keyword.
-     * @return string|null The inverse relation keyword, or null if not found.
-     */
-    public function getInverse(string $owningSide): ?string
+    public function getInverse(RelationKind $owningSide): ?RelationKind
     {
-        return $this->all()[$owningSide] ?? null;
+        return $this->map[$owningSide->value] ?? null;
     }
 }

@@ -10,6 +10,16 @@ use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Entity\Attributes\JoinTable;
 use Doctrine\Inflector\Inflector;
 use Doctrine\Inflector\InflectorFactory;
+use MonkeysLegion\Cli\Config\FieldType;
+use MonkeysLegion\Cli\Helpers\Identifier;
+
+enum CompletionContext: string
+{
+    case ENTITY = 'entity';
+    case FIELD = 'field';
+    case RELATION = 'relation';
+    case DEFAULT = 'default';
+}
 
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
 final class MakeEntityCommand extends Command
@@ -18,14 +28,25 @@ final class MakeEntityCommand extends Command
     /** @var string[] DB scalar types offered in the wizard */
     private array $fieldTypes;
 
-    /** CLI keyword → attribute class */
-    private array $relTypes;
+    private object $relTypes;
 
-    /** owning-side attribute → inverse attribute */
-    private array $inverseMap;
+    /** 
+     * Maps each owning-side relation kind (e.g., ONE_TO_MANY) 
+     * to its corresponding inverse relation kind (e.g., MANY_TO_ONE). 
+     */
+    private object $inverseMap;
 
-    /** DB type → PHP type */
-    private array $phpTypeMap;
+    /** 
+     * Maps DB field types (e.g., "string", "json") 
+     * to their corresponding PHP native types (e.g., "string", "array"). 
+     */
+    private object $phpTypeMap;
+
+    /** @var array<string, string> Field names in the current entity */
+    protected array $fieldNames = [];
+
+    /** @var array<string, string> Relationship names in the current entity */
+    protected array $relNames = [];
 
     public function __construct(
         private EntityConfig $config,
@@ -33,13 +54,18 @@ final class MakeEntityCommand extends Command
         parent::__construct();
 
         $this->fieldTypes = $this->config->fieldTypes->all();
-        $this->relTypes = $this->config->relationKeywordMap->all();
-        $this->inverseMap = $this->config->relationInverseMap->all();
-        $this->phpTypeMap = $this->config->phpTypeMap->all();
+        $this->fieldTypes = array_map(fn(FieldType $case) => $case->value, $this->fieldTypes);
+
+        $this->relTypes = $this->config->relationKeywordMap;;
+
+        $this->inverseMap = $this->config->relationInverseMap;
+
+        $this->phpTypeMap = $this->config->phpTypeMap;
     }
 
     /* helpers */
-    private array $completions  = [];
+    private string $completionContext = CompletionContext::DEFAULT->value;
+    private array $contextAwareCompletions = [];
     private array $inverseQueue = [];
 
     /** @var Inflector */
@@ -58,21 +84,35 @@ final class MakeEntityCommand extends Command
     protected function handle(): int
     {
         if (function_exists('readline_completion_function')) {
-            readline_completion_function([$this, 'readlineComplete']);
+            readline_completion_function([$this, 'contextAwareCompleter']);
         }
 
         $this->inflector = InflectorFactory::create()->build();
+        $dir  = base_path('app/Entity');
+        @mkdir($dir, 0755, true);
+
+        /* 0️⃣  prepare entities name */
+        $entityFiles = glob($dir . '/*.php');
+        $entities = [];
+        foreach ($entityFiles as $filePath) {
+            // Get filename without extension, e.g. User.php -> User
+            $fileName = basename($filePath, '.php');
+            $entities[$fileName] = $fileName;
+        }
+        $this->setCompletionContext(CompletionContext::ENTITY, array_keys($entities));
 
         /* 1️⃣  entity name */
         $name = $_SERVER['argv'][2] ?? $this->ask('Enter entity name (e.g. User)');
         if (!preg_match('/^[A-Z][A-Za-z0-9]+$/', $name)) {
             return $this->fail('Invalid class name – must start with uppercase.');
         }
+        if (!isset($entities[$name])) {
+            $entities[$name] = $name;
+            $this->setCompletionContext(CompletionContext::FIELD, array_keys($entities));
+        }
 
         /* 2️⃣  ensure file exists */
-        $dir  = base_path('app/Entity');
         $file = "$dir/$name.php";
-        @mkdir($dir, 0755, true);
         if (!is_file($file)) {
             $this->createStub($name, $file);
             $this->info("✅  Created stub $file");
@@ -81,14 +121,16 @@ final class MakeEntityCommand extends Command
 
         /* 3️⃣  scan existing props */
         $src = file_get_contents($file);
-        preg_match_all('/#\[Field.+\$([A-Za-z0-9_]+)/',                $src, $m);
+        preg_match_all('/#\[Field[^\]]*\]\s+public\s+(?:[^\$]*\s)?\$([A-Za-z0-9_]+)/m', $src, $m);
         $existingFields = $m[1] ?? [];
-        preg_match_all('/#\[(OneToOne|OneToMany|ManyToOne|ManyToMany).+\$([A-Za-z0-9_]+)/', $src, $m);
+        preg_match_all('/#\[(OneToOne|OneToMany|ManyToOne|ManyToMany)[^\]]*\]\s+public\s+(?:[^\$]*\s)?\$([A-Za-z0-9_]+)/m', $src, $m);
         $existingRels = $m[2] ?? [];
 
-        $newFields = $newRels = [];
+        /* 34️⃣  prepare existing props */
+        $existingFields = array_fill_keys($existingFields, []);
+        $existingRels   = array_fill_keys($existingRels, []);
 
-        /* 4️⃣  wizard */
+        /* 5️⃣  wizard */
         menu:
         $this->info("\n===== Make Entity: $name =====");
         $this->line("[1] Add field");
@@ -96,10 +138,10 @@ final class MakeEntityCommand extends Command
         $this->line("[3] Finish & save");
         switch ($this->ask('Choose option 1-3')) {
             case '1':
-                $this->wizardField($existingFields, $newFields);
+                $this->wizardField($existingFields);
                 goto menu;
             case '2':
-                $this->wizardRelation($existingRels, $newRels, $name);
+                $this->wizardRelation($existingRels, $name);
                 goto menu;
             case '3':
                 break;
@@ -107,17 +149,17 @@ final class MakeEntityCommand extends Command
                 $this->error('Enter 1, 2 or 3');
                 goto menu;
         }
-        if (!$newFields && !$newRels) {
+        if (!$this->fieldNames && !$this->relNames) {
             $this->info('No changes.');
             return self::SUCCESS;
         }
 
-        /* 5️⃣  build fragments */
+        /* 6️⃣  build fragments */
         $props = $ctors = $methods = [];
-        foreach ($newFields as $p => $t) {
+        foreach ($this->fieldNames as $p => $t) {
             $this->emitField($p, $t, $props, $methods);
         }
-        foreach ($newRels as $p => $m) {
+        foreach ($this->relNames as $p => $m) {
             $this->emitRelation(
                 $p,
                 $m['attr'],
@@ -131,8 +173,7 @@ final class MakeEntityCommand extends Command
             );
         }
 
-        /* 6️⃣  inject into file */
-        /* 6️⃣  inject into file */
+        /* 7️⃣  inject into file */
         $code = file_get_contents($file);
         if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
             // Use your insertBeforeConstructor method for properties
@@ -156,7 +197,7 @@ final class MakeEntityCommand extends Command
         }
         $this->info("✅  Updated $file");
 
-        /* 7️⃣  inverse patch */
+        /* 8️⃣  inverse patch */
         $this->applyInverseQueue();
         return self::SUCCESS;
     }
@@ -165,19 +206,28 @@ final class MakeEntityCommand extends Command
      * Prompt the user for a field name and type.
      *
      * @param array $existing Existing properties to check against.
-     * @param array &$out      Output array to store the new property.
      */
-    private function wizardField(array $existing, array &$out): void
+    private function wizardField(array $existing): void
     {
+        $this->setCompletionContext(CompletionContext::DEFAULT, []);
         $prop = $this->ask('  Field name: ');
-        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
-        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
+
+        if (!Identifier::isValid($prop)) {
             $this->error('Invalid.');
             return;
         }
+        if (isset($existing[$prop])) {
+            $this->error("Field '$prop' already exists in the class.");
+            return;
+        }
+        if (isset($this->fieldNames[$prop])) {
+            $this->error("Field '$prop' already added during this wizard session.");
+            return;
+        }
 
+        $this->setCompletionContext(CompletionContext::FIELD, $this->fieldTypes);
         $type = $this->chooseOption('field', $this->fieldTypes);
-        $out[$prop] = $type;
+        $this->fieldNames[$prop] = $type;
         $this->info("  ➕  $prop:$type added.");
     }
 
@@ -190,19 +240,25 @@ final class MakeEntityCommand extends Command
      */
     private function wizardRelation(
         array $existing,
-        array &$out,
         string $selfClass
     ): void {
-        $kind = $this->chooseOption('relation', array_keys($this->relTypes));
-        $attr = $this->relTypes[$kind];
+        $opts = $this->relTypes->all();
+        $this->setCompletionContext(CompletionContext::RELATION, array_keys($opts));
+        $kind = $this->chooseOption('relation', array_keys($opts));
+        $relCase = $this->relTypes->tryFrom($kind);
+        $attr = $this->relTypes->getAttribute($relCase);
 
         /* target entity */
-        $this->completions = array_map(
+        $entities = array_map(
             fn($f) => basename($f, '.php'),
             glob(base_path('app/Entity') . '/*.php')
         );
+        $this->setCompletionContext(CompletionContext::ENTITY, $entities);
         $target = $this->ask('  Target entity');
-        if ($target === '') return;
+        if (!Identifier::isValid($target)) {
+            $this->error('Invalid entity name.');
+            return;
+        }
 
         $short = str_contains($target, '\\') ? substr($target, strrpos($target, '\\') + 1) : $target;
         $fqcn  = str_contains($target, '\\') ? $target : "App\\Entity\\$target";
@@ -235,12 +291,13 @@ final class MakeEntityCommand extends Command
             }
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
-        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
+        if ($prop === '' || isset($existing[$prop]) || isset($this->relNames[$prop])) return;
 
         /* inverse side? */
         $inverseProp = null;
         if (strtolower($this->ask('  Generate inverse side in target? [y/N]')) === 'y') {
-            $invAttr = $this->inverseMap[$attr];
+            $invRelationKind = $this->inverseMap->getInverse($relCase);
+            $invAttr = $invRelationKind->value;
             $base = lcfirst($selfClass);
             if (in_array($invAttr, ['OneToMany', 'ManyToMany'], true)) {
                 // proper plural, e.g. “companies”
@@ -261,7 +318,7 @@ final class MakeEntityCommand extends Command
             );
         }
 
-        $out[$prop] = [
+        $this->relNames[$prop] = [
             'attr'       => $attr,
             'target'     => $fqcn,
             'other_prop' => $inverseProp,
@@ -290,8 +347,13 @@ final class MakeEntityCommand extends Command
         array  &$props,
         array  &$meth
     ): void {
-        // Map DB type → PHP type (fallback to raw $db)
-        $type  = $this->phpTypeMap[$db] ?? $db;
+        $fieldType = FieldType::tryFrom($db);
+        if (!$fieldType) {
+            $this->error("Unknown field type '$db'.");
+            return;
+        }
+
+        $type = $this->phpTypeMap->map($fieldType);
         $Stud  = ucfirst($prop);
 
         // ─────────── property & attribute ───────────
@@ -557,15 +619,115 @@ final class MakeEntityCommand extends Command
      */
     public function readlineComplete(string $in, int $i): array
     {
-        $opts = array_filter($this->completions, fn($o) => str_starts_with($o, $in));
+        $opts = array_filter($this->contextAwareCompletions[$this->completionContext] ?? [], fn($o) => $this->fuzzyMatch($in, $o));
         $count = count($opts);
 
-        if ($count >= 1) {
-            echo PHP_EOL . implode(" | ", $opts) . PHP_EOL;
+        if ($count > 0) {
+            usort($opts, function ($a, $b) use ($in) {
+                similar_text($in, $b, $percentB);
+                similar_text($in, $a, $percentA);
+                return $percentB <=> $percentA;
+            });
+
+            echo PHP_EOL . "Suggestions: " . implode(" | ", $opts) . PHP_EOL;
             echo "> " . $in;
         }
 
         return $count >= 1 ? [$in, ...$opts] : [$in];
+    }
+
+    /**
+     * Single completer that adapts based on current context
+     */
+    public function contextAwareCompleter(string $input, int $index): array
+    {
+        switch ($this->completionContext) {
+            case CompletionContext::ENTITY->value:
+                return $this->completeEntityName($input, $index);
+            case CompletionContext::FIELD->value:
+                return $this->readlineComplete($input, $index);
+            case CompletionContext::RELATION->value:
+                return $this->readlineComplete($input, $index);
+            default:
+                return [];
+        }
+    }
+
+    private function setCompletionContext(CompletionContext $context, array $completions = []): void
+    {
+        $this->completionContext = $context->value;
+        $this->contextAwareCompletions[$context->value] = $completions;
+    }
+
+    /**
+     * Completes entity names based on the input.
+     *
+     * This method provides suggestions for entity names based on the input string.
+     * It uses various inflection methods to generate possible variants of the input.
+     *
+     * @param string $in The input string to complete.
+     * @param int $i The index of the input (not used here).
+     * @return array An array of suggestions including the original input.
+     */
+    public function completeEntityName(string $in, int $i): array
+    {
+        $returnOpts = $this->contextAwareCompletions[CompletionContext::ENTITY->value] ?? [];
+        if (empty($returnOpts)) {
+            return [$in];
+        }
+        if (empty($in)) {
+            echo PHP_EOL . "Suggestions: " . implode(" | ", $returnOpts) . PHP_EOL;
+            echo "> " . $in;
+            return $returnOpts;
+        }
+
+        $inputVariants = [
+            $in,
+            $this->inflector->tableize($in),
+            $this->inflector->classify($in),
+            $this->inflector->pluralize($in),
+            $this->inflector->pluralize($this->inflector->tableize($in)),
+            $this->inflector->classify($this->inflector->pluralize($in)),
+        ];
+
+        $opts = array_filter($returnOpts, function ($entity) use ($inputVariants) {
+            $normalizedEntity = strtolower($this->inflector->tableize($entity));
+            foreach ($inputVariants as $variant) {
+                if ($variant === null) continue;
+                $variantNorm = strtolower($variant);
+                if (strpos($normalizedEntity, $variantNorm) !== false) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        $count = count($opts);
+
+        if ($count > 0) {
+            usort($opts, function ($a, $b) use ($in) {
+                similar_text($in, $b, $percentB);
+                similar_text($in, $a, $percentA);
+                return $percentB <=> $percentA;
+            });
+
+            echo PHP_EOL . "Suggestions: " . implode(" | ", $opts) . PHP_EOL;
+            echo "> " . $in;
+        }
+
+        return $count >= 1 ? [$in, ...$opts] : [$in];
+    }
+
+    /**
+     * Checks if the input string matches any of the options in a fuzzy manner.
+     *
+     * @param string $input The input string to match against options.
+     * @param string $option The option to check against.
+     * @return bool True if the input matches the option, false otherwise.
+     */
+    private function fuzzyMatch(string $input, string $option): bool
+    {
+        return stripos($option, $input) !== false;
     }
 
     /**
@@ -578,7 +740,6 @@ final class MakeEntityCommand extends Command
     private function chooseOption(string $kind, array $opts): string
     {
         foreach ($opts as $i => $o) $this->line(sprintf("  [%2d] %s", $i + 1, $o));
-        $this->completions = $opts;
         while (true) {
             $sel = $this->ask("Select $kind");
             if (ctype_digit($sel) && isset($opts[$sel - 1])) return $opts[$sel - 1];
