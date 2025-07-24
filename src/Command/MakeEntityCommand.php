@@ -10,18 +10,6 @@ use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Entity\Attributes\JoinTable;
 use Doctrine\Inflector\Inflector;
 use Doctrine\Inflector\InflectorFactory;
-use MonkeysLegion\Cli\Config\FieldType;
-use MonkeysLegion\Cli\Config\RelationKind;
-use MonkeysLegion\Cli\Helpers\Identifier;
-use MonkeysLegion\Cli\Service\ClassManipulator;
-
-enum CompletionContext: string
-{
-    case ENTITY = 'entity';
-    case FIELD = 'field';
-    case RELATION = 'relation';
-    case DEFAULT = 'default';
-}
 
 #[CommandAttr('make:entity', 'Generate or update an Entity class with fields & relationships')]
 final class MakeEntityCommand extends Command
@@ -30,25 +18,14 @@ final class MakeEntityCommand extends Command
     /** @var string[] DB scalar types offered in the wizard */
     private array $fieldTypes;
 
-    private object $relTypes;
+    /** CLI keyword → attribute class */
+    private array $relTypes;
 
-    /** 
-     * Maps each owning-side relation kind (e.g., ONE_TO_MANY) 
-     * to its corresponding inverse relation kind (e.g., MANY_TO_ONE). 
-     */
-    private object $inverseMap;
+    /** owning-side attribute → inverse attribute */
+    private array $inverseMap;
 
-    /** 
-     * Maps DB field types (e.g., "string", "json") 
-     * to their corresponding PHP native types (e.g., "string", "array"). 
-     */
-    private object $phpTypeMap;
-
-    /** @var array<string, string> Field names in the current entity */
-    protected array $fieldNames = [];
-
-    /** @var array<string, string> Relationship names in the current entity */
-    protected array $relNames = [];
+    /** DB type → PHP type */
+    private array $phpTypeMap;
 
     public function __construct(
         private EntityConfig $config,
@@ -56,23 +33,14 @@ final class MakeEntityCommand extends Command
         parent::__construct();
 
         $this->fieldTypes = $this->config->fieldTypes->all();
-        $this->fieldTypes = array_map(fn(FieldType $case) => $case->value, $this->fieldTypes);
-
-        $this->relTypes = $this->config->relationKeywordMap;
-
-        $this->inverseMap = $this->config->relationInverseMap;
-
-        $this->phpTypeMap = $this->config->phpTypeMap;
+        $this->relTypes = $this->config->relationKeywordMap->all();
+        $this->inverseMap = $this->config->relationInverseMap->all();
+        $this->phpTypeMap = $this->config->phpTypeMap->all();
     }
 
     /* helpers */
-    private string $completionContext = CompletionContext::DEFAULT->value;
-    private array $contextAwareCompletions = [];
+    private array $completions  = [];
     private array $inverseQueue = [];
-    private array $inverseShouldBePlural = [
-        RelationKind::ONE_TO_MANY->value,
-        RelationKind::MANY_TO_MANY->value,
-    ];
 
     /** @var Inflector */
     private Inflector $inflector;
@@ -90,74 +58,37 @@ final class MakeEntityCommand extends Command
     protected function handle(): int
     {
         if (function_exists('readline_completion_function')) {
-            readline_completion_function([$this, 'contextAwareCompleter']);
+            readline_completion_function([$this, 'readlineComplete']);
         }
 
         $this->inflector = InflectorFactory::create()->build();
-        $dir  = base_path('app/Entity');
-        @mkdir($dir, 0755, true);
-
-        /* 0️⃣  prepare entities name */
-        $entityFiles = glob($dir . '/*.php');
-        $entities = [];
-        foreach ($entityFiles as $filePath) {
-            // Get filename without extension, e.g. User.php -> User
-            $fileName = basename($filePath, '.php');
-            $entities[$fileName] = $fileName;
-        }
-        $this->setCompletionContext(CompletionContext::ENTITY, array_keys($entities));
 
         /* 1️⃣  entity name */
         $name = $_SERVER['argv'][2] ?? $this->ask('Enter entity name (e.g. User)');
         if (!preg_match('/^[A-Z][A-Za-z0-9]+$/', $name)) {
             return $this->fail('Invalid class name – must start with uppercase.');
         }
-        if (!isset($entities[$name])) {
-            $entities[$name] = $name;
-            $this->setCompletionContext(CompletionContext::FIELD, array_keys($entities));
-        }
 
         /* 2️⃣  ensure file exists */
+        $dir  = base_path('app/Entity');
         $file = "$dir/$name.php";
+        @mkdir($dir, 0755, true);
         if (!is_file($file)) {
             $this->createStub($name, $file);
             $this->info("✅  Created stub $file");
             $this->createRepoStub($name);
         }
 
-        // Use ClassManipulator for AST-based editing
-        $manipulator = new ClassManipulator($file);
-
         /* 3️⃣  scan existing props */
         $src = file_get_contents($file);
-        $ast = (new \PhpParser\ParserFactory())->createForNewestSupportedVersion()->parse($src);
-        $existingFields = [];
-        $existingRels = [];
-        if ($ast) {
-            $class = (new \PhpParser\NodeFinder())->findFirstInstanceOf($ast, \PhpParser\Node\Stmt\Class_::class);
-            if ($class) {
-                foreach ($class->stmts as $stmt) {
-                    if ($stmt instanceof \PhpParser\Node\Stmt\Property) {
-                        $propName = $stmt->props[0]->name->name;
-                        foreach ($stmt->attrGroups as $attrGroup) {
-                            foreach ($attrGroup->attrs as $attr) {
-                                $attrName = $attr->name->toString();
-                                if ($attrName === 'Field') {
-                                    $existingFields[] = $propName;
-                                }
-                                if (in_array($attrName, array_values($this->relTypes->all()), true)) {
-                                    $existingRels[] = $propName;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        $existingFields = array_fill_keys($existingFields, []);
-        $existingRels = array_fill_keys($existingRels, []);
+        preg_match_all('/#\[Field.+\$([A-Za-z0-9_]+)/',                $src, $m);
+        $existingFields = $m[1] ?? [];
+        preg_match_all('/#\[(OneToOne|OneToMany|ManyToOne|ManyToMany).+\$([A-Za-z0-9_]+)/', $src, $m);
+        $existingRels = $m[2] ?? [];
 
-        /* 5️⃣  wizard */
+        $newFields = $newRels = [];
+
+        /* 4️⃣  wizard */
         menu:
         $this->info("\n===== Make Entity: $name =====");
         $this->line("[1] Add field");
@@ -165,10 +96,10 @@ final class MakeEntityCommand extends Command
         $this->line("[3] Finish & save");
         switch ($this->ask('Choose option 1-3')) {
             case '1':
-                $this->wizardField($existingFields);
+                $this->wizardField($existingFields, $newFields);
                 goto menu;
             case '2':
-                $this->wizardRelation($existingRels, $name);
+                $this->wizardRelation($existingRels, $newRels, $name);
                 goto menu;
             case '3':
                 break;
@@ -176,38 +107,56 @@ final class MakeEntityCommand extends Command
                 $this->error('Enter 1, 2 or 3');
                 goto menu;
         }
-        if (!$this->fieldNames && !$this->relNames) {
+        if (!$newFields && !$newRels) {
             $this->info('No changes.');
             return self::SUCCESS;
         }
 
-        /* 6️⃣  build fragments and inject via ClassManipulator */
-        foreach ($this->fieldNames as $p => $t) {
-            $fieldType = FieldType::tryFrom($t);
-            if (!$fieldType) {
-                $this->error("Unknown field type '$t' for property '$p'.");
-                continue;
-            }
-            $phpType = $this->phpTypeMap->map($fieldType);
-            $manipulator->addScalarField($p, $t, $phpType);
+        /* 5️⃣  build fragments */
+        $props = $ctors = $methods = [];
+        foreach ($newFields as $p => $t) {
+            $this->emitField($p, $t, $props, $methods);
         }
-        foreach ($this->relNames as $p => $m) {
-            $short = substr($m['target'], strrpos($m['target'], '\\') + 1);
-            $isMany = in_array($m['attr'], $this->inverseShouldBePlural, true);
-            $manipulator->addRelation(
+        foreach ($newRels as $p => $m) {
+            $this->emitRelation(
                 $p,
                 $m['attr'],
-                $short,
-                $isMany,
+                $m['target'],
+                $props,
+                $ctors,
+                $methods,
                 $m['other_prop'] ?? null,
                 $m['joinTable'] ?? null,
-                $m['attr'] === RelationKind::ONE_TO_ONE->value && !empty($m['other_prop'])
+                $this->hasProperty($code ?? '', $p)
             );
         }
-        $manipulator->save();
+
+        /* 6️⃣  inject into file */
+        /* 6️⃣  inject into file */
+        $code = file_get_contents($file);
+        if (preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
+            // Use your insertBeforeConstructor method for properties
+            $body = $this->insertBeforeConstructor($m['body'], rtrim(implode("\n", $props)));
+
+            // Keep the improved constructor handling from incoming
+            if (!empty($ctors)) {
+                $body = preg_replace(
+                    '/(public function __construct\(\)\s*\{)/',
+                    "$1\n" . implode("\n", $ctors),
+                    $body
+                );
+            }
+
+            // Keep the improved methods handling from incoming
+            if (!empty($methods)) {
+                $body .= "\n" . implode("\n", $methods) . "\n";
+            }
+
+            file_put_contents($file, $m['head'] . $body . $m['tail'] . "\n");
+        }
         $this->info("✅  Updated $file");
 
-        /* 8️⃣  inverse patch */
+        /* 7️⃣  inverse patch */
         $this->applyInverseQueue();
         return self::SUCCESS;
     }
@@ -216,28 +165,19 @@ final class MakeEntityCommand extends Command
      * Prompt the user for a field name and type.
      *
      * @param array $existing Existing properties to check against.
+     * @param array &$out      Output array to store the new property.
      */
-    private function wizardField(array $existing): void
+    private function wizardField(array $existing, array &$out): void
     {
-        $this->setCompletionContext(CompletionContext::DEFAULT, []);
-        $prop = $this->ask('  Field name: ');
-
-        if (!Identifier::isValid($prop)) {
+        $prop = $this->ask('  Field name');
+        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
+        if (!preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
             $this->error('Invalid.');
             return;
         }
-        if (isset($existing[$prop])) {
-            $this->error("Field '$prop' already exists in the class.");
-            return;
-        }
-        if (isset($this->fieldNames[$prop])) {
-            $this->error("Field '$prop' already added during this wizard session.");
-            return;
-        }
 
-        $this->setCompletionContext(CompletionContext::FIELD, $this->fieldTypes);
         $type = $this->chooseOption('field', $this->fieldTypes);
-        $this->fieldNames[$prop] = $type;
+        $out[$prop] = $type;
         $this->info("  ➕  $prop:$type added.");
     }
 
@@ -250,32 +190,24 @@ final class MakeEntityCommand extends Command
      */
     private function wizardRelation(
         array $existing,
+        array &$out,
         string $selfClass
     ): void {
-        $opts = $this->relTypes->all();
-        $this->setCompletionContext(CompletionContext::RELATION, array_keys($opts));
-        $kind = $this->chooseOption('relation', array_keys($opts));
-        $relCase = $this->relTypes->tryFrom($kind);
-        $attr = $relCase->value;
-        $attrUC = ucfirst($relCase->value);
+        $kind = $this->chooseOption('relation', array_keys($this->relTypes));
+        $attr = $this->relTypes[$kind];
 
         /* target entity */
-        $entities = array_map(
+        $this->completions = array_map(
             fn($f) => basename($f, '.php'),
             glob(base_path('app/Entity') . '/*.php')
         );
-        $this->setCompletionContext(CompletionContext::ENTITY, $entities);
         $target = $this->ask('  Target entity');
-        if (!Identifier::isValid($target)) {
-            $this->error('Invalid entity name.');
-            return;
-        }
+        if ($target === '') return;
 
         $short = str_contains($target, '\\') ? substr($target, strrpos($target, '\\') + 1) : $target;
         $fqcn  = str_contains($target, '\\') ? $target : "App\\Entity\\$target";
 
-        echo "  ➕  $attrUC relation to $fqcn\n";
-        if (in_array($attr, $this->inverseShouldBePlural, true)) {
+        if (in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
             // plural suggestion for collections
             $suggest = lcfirst($this->inflector->pluralize($short));
         } else {
@@ -285,7 +217,7 @@ final class MakeEntityCommand extends Command
 
         $joinTable = null;
         /* property name */
-        if ($attr === RelationKind::MANY_TO_MANY->value) {
+        if ($attr === 'ManyToMany') {
             // default to owning-sided ManyToMany
             $owning = true;
             if ($owning) {
@@ -303,16 +235,14 @@ final class MakeEntityCommand extends Command
             }
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
-        if ($prop === '' || isset($existing[$prop]) || isset($this->relNames[$prop])) return;
+        if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
 
         /* inverse side? */
         $inverseProp = null;
         if (strtolower($this->ask('  Generate inverse side in target? [y/N]')) === 'y') {
-            $invRelationKind = $this->inverseMap->getInverse($relCase);
-            $invAttr = $invRelationKind->value;
+            $invAttr = $this->inverseMap[$attr];
             $base = lcfirst($selfClass);
-
-            if (in_array($invAttr, $this->inverseShouldBePlural, true)) {
+            if (in_array($invAttr, ['OneToMany', 'ManyToMany'], true)) {
                 // proper plural, e.g. “companies”
                 $defName = $this->inflector->pluralize($base);
             } else {
@@ -320,30 +250,189 @@ final class MakeEntityCommand extends Command
                 $defName = $base;
             }
 
-            $attr = ucfirst($relCase->value);
-            $isInverseOneToOne = $attr === ucfirst(RelationKind::ONE_TO_ONE->value) && !empty($inverseProp);
             $inverseProp = $this->ask("  Inverse property in $short [{$defName}]") ?: $defName;
-            $invAttr = ucfirst($invRelationKind->value);
-            $selfClass = "App\\Entity\\$selfClass";
             $this->queueInverse(
                 $fqcn,
                 $inverseProp,
                 $invAttr,
-                $selfClass,
+                "App\\Entity\\$selfClass",
                 $prop,
-                $isInverseOneToOne,
+                $attr === 'OneToOne',
             );
         }
 
-        $this->relNames[$prop] = [
-            'attr'       => $attrUC,
+        $out[$prop] = [
+            'attr'       => $attr,
             'target'     => $fqcn,
             'other_prop' => $inverseProp,
             'joinTable'  => $joinTable
         ];
 
-        $this->info("  ➕  $selfClass::$prop ($attrUC) --> $fqcn");
-        $this->info("  ➕  $fqcn::$inverseProp ($invAttr) <-- $selfClass");
+        $this->info("  ➕  $prop:$kind ➔ $fqcn");
+    }
+
+    /* ───────────── Fragment emitters ───────────── */
+
+    /**
+     * Emit the fragments for a scalar field:
+     *  - the #[Field] attribute
+     *  - the private property
+     *  - the getter and setter methods
+     *
+     * @param string   $prop   The property name (e.g. “name”)
+     * @param string   $db     The DB type keyword (e.g. “string”, “json”)
+     * @param string[] &$props Accumulator for property‐definition lines
+     * @param string[] &$meth  Accumulator for method‐definition lines
+     */
+    private function emitField(
+        string $prop,
+        string $db,
+        array  &$props,
+        array  &$meth
+    ): void {
+        // Map DB type → PHP type (fallback to raw $db)
+        $type  = $this->phpTypeMap[$db] ?? $db;
+        $Stud  = ucfirst($prop);
+
+        // ─────────── property & attribute ───────────
+        $props[] = "    #[Field(type: '{$db}')]";
+        $props[] = "    public {$type} \${$prop};";
+        $props[] = "";
+
+        // ─────────── getter ───────────
+        $meth[]  = "    public function get{$Stud}(): {$type}";
+        $meth[]  = "    {";
+        $meth[]  = "        return \$this->{$prop};";
+        $meth[]  = "    }";
+        $meth[]  = "";
+
+        // ─────────── setter ───────────
+        $meth[]  = "    public function set{$Stud}({$type} \${$prop}): self";
+        $meth[]  = "    {";
+        $meth[]  = "        \$this->{$prop} = \${$prop};";
+        $meth[]  = "        return \$this;";
+        $meth[]  = "    }";
+        $meth[]  = "";
+    }
+
+    /**
+     * Emit relation fragments.
+     *
+     * @param string      $prop       the property name
+     * @param string      $attr       the relation attribute (OneToOne, OneToMany…)
+     * @param string      $target     the FQCN of the target entity
+     * @param array       &$props     where to append the generated property lines
+     * @param array       &$ctor      where to append any constructor initializers
+     * @param array       &$meth      where to append the generated methods
+     * @param string|null $otherProp  property name on the opposite side (null if none)
+     * @param JoinTable|null $joinTable  the join table definition (if ManyToMany)
+     * @param bool       $skipProperty whether to skip emitting the property itself
+     */
+    private function emitRelation(
+        string $prop,
+        string $attr,
+        string $target,
+        array  &$props,
+        array  &$ctor,
+        array  &$meth,
+        ?string $otherProp = null,
+        ?JoinTable $joinTable = null,
+        bool $skipProperty = false,
+        bool $inverseO2O = false
+    ): void {
+        // short class name (“Project” from “App\Entity\Project”)
+        $short = substr($target, strrpos($target, '\\') + 1);
+        $Stud  = ucfirst($prop);
+        $many  = in_array($attr, ['OneToMany', 'ManyToMany'], true);
+
+        /* ───── build attribute arguments ───── */
+        $args = ["targetEntity: {$short}::class"];
+
+        /* ①  special-case: inverse side of One-to-One  */
+        if ($attr === 'OneToOne' && $inverseO2O && $otherProp) {
+            // explicit inverse side ⇒ mappedBy
+            $args[] = "mappedBy: '{$otherProp}'";
+        } elseif ($otherProp) {
+            $args[] = in_array($attr, ['OneToMany', 'ManyToMany'], true)
+                ? "mappedBy: '{$otherProp}'"
+                : "inversedBy: '{$otherProp}'";
+        }
+
+        /* ③  joinTable for owning Many-to-Many (unchanged) */
+        if ($attr === 'ManyToMany' && $joinTable) {
+            $jt = $joinTable;
+            $args[] = "joinTable: new JoinTable(name: '{$jt->name}', "
+                . "joinColumn: '{$jt->joinColumn}', "
+                . "inverseColumn: '{$jt->inverseColumn}')";
+        }
+
+        /* ───── property + constructor (only if not skipped) ───── */
+        if (!$skipProperty) {
+            if ($many) {
+                $props[] = "    /** @var {$short}[] */";
+            }
+            $props[] = '    #[' . $attr . '(' . implode(', ', $args) . ')]';
+            $props[] = $many
+                ? "    public array \${$prop};"
+                : "    public ?{$short} \${$prop} = null;";
+            $props[] = "";
+
+            if ($many) {            // initialise collection
+                $ctor[] = "        \$this->{$prop} = [];";
+            }
+        }
+
+        /* ───── methods (always emitted – duplicates filtered earlier) ───── */
+        if ($many) {
+            // add()
+            $meth[] = "    public function add{$short}({$short} \$item): self";
+            $meth[] = "    {";
+            $meth[] = "        \$this->{$prop}[] = \$item;";
+            $meth[] = "        return \$this;";
+            $meth[] = "    }";
+            $meth[] = "";
+
+            // remove()
+            $meth[] = "    public function remove{$short}({$short} \$item): self";
+            $meth[] = "    {";
+            $meth[] = "        \$this->{$prop} = array_filter(";
+            $meth[] = "            \$this->{$prop}, fn(\$i) => \$i !== \$item";
+            $meth[] = "        );";
+            $meth[] = "        return \$this;";
+            $meth[] = "    }";
+            $meth[] = "";
+
+            // getter()
+            $meth[] = "    /** @return {$short}[] */";
+            $meth[] = "    public function get{$Stud}(): array";
+            $meth[] = "    {";
+            $meth[] = "        return \$this->{$prop};";
+            $meth[] = "    }";
+            $meth[] = "";
+        } else {
+            // getter()
+            $meth[] = "    public function get{$Stud}(): ?{$short}";
+            $meth[] = "    {";
+            $meth[] = "        return \$this->{$prop};";
+            $meth[] = "    }";
+            $meth[] = "";
+
+            // setter()
+            $meth[] = "    public function set{$Stud}(?{$short} \${$prop}): self";
+            $meth[] = "    {";
+            $meth[] = "        \$this->{$prop} = \${$prop};";
+            $meth[] = "        return \$this;";
+            $meth[] = "    }";
+            $meth[] = "";
+
+            // unset/remove()
+            $meth[] = "    public function remove{$Stud}(): self";
+            $meth[] = "    {";
+            $meth[] = "        \$this->{$prop} = null;";
+            $meth[] = "        return \$this;";
+            $meth[] = "    }";
+            $meth[] = "";
+        }
     }
 
     /**
@@ -384,27 +473,65 @@ final class MakeEntityCommand extends Command
             if (!is_file($file)) {
                 $this->createStub(substr($fqcn, strrpos($fqcn, '\\') + 1), $file);
             }
-            $manipulator = new ClassManipulator($file);
+
+            $code = file_get_contents($file);
+            if (!preg_match('/^(?<head>.*?\{)(?<body>.*)(?<tail>\})\s*$/s', $code, $m)) {
+                continue;
+            }
+
+            $body  = $m['body'];
+            $props = $ctor = $meth = [];
 
             foreach ($defs as $d) {
-                $targetClass = substr($d['target'], strrpos($d['target'], '\\') + 1);
-                $isMany = in_array($d['attr'], $this->inverseShouldBePlural, true);
-
-                if ($d['prop'] === 'id' && $isMany) {
-                    $d['prop'] = lcfirst($this->inflector->pluralize($targetClass));
-                }
-
-                $manipulator->addRelation(
+                $this->emitRelation(
                     $d['prop'],
                     $d['attr'],
-                    $targetClass,
-                    $isMany,
-                    $d['other_prop'] ?? null,
-                    $d['joinTable'] ?? null,
-                    $d['inverse_o2o'] ?? false
+                    $d['target'],
+                    $props,
+                    $ctor,
+                    $meth,
+                    $d['other_prop'],
+                    $d['joinTable'] ?? null,           // Keep from incoming
+                    $this->hasProperty($body, $d['prop']), // Keep from incoming
+                    $d['inverse_o2o'] ?? false,        // Keep from incoming
                 );
             }
-            $manipulator->save();
+
+            // Use your insertBeforeConstructor method for properties
+            $body = $this->insertBeforeConstructor(
+                $m['body'],
+                rtrim(implode("\n", $props))
+            );
+
+            // Keep the improved constructor handling from incoming
+            $body = preg_replace(
+                '/(public function __construct\(\)\s*\{)/',
+                "$1\n" . implode("\n", $ctor),
+                $body,
+                1,
+                $ok
+            );
+            if (!$ok && $ctor) {
+                $body = "    public function __construct()\n    {\n" .
+                    implode("\n", $ctor) . "\n    }\n\n" . $body;
+            }
+            $body .= "\n" . implode("\n", $meth) . "\n";
+
+            $body = preg_replace(
+                '/(public function __construct\(\)\s*\{)/',
+                "$1\n" . implode("\n", $ctor),
+                $body,
+                1,
+                $ok
+            );
+
+            if (!$ok && $ctor) {
+                $body = "    public function __construct()\n    {\n" .
+                    implode("\n", $ctor) . "\n    }\n\n" . $body;
+            }
+            $body .= "\n" . implode("\n", $meth) . "\n";
+
+            file_put_contents($file, $m['head'] . $body . $m['tail'] . "\n");
             $this->info("    ↪  Patched inverse side in $file");
         }
     }
@@ -430,115 +557,7 @@ final class MakeEntityCommand extends Command
      */
     public function readlineComplete(string $in, int $i): array
     {
-        $opts = array_filter($this->contextAwareCompletions[$this->completionContext] ?? [], fn($o) => $this->fuzzyMatch($in, $o));
-        $count = count($opts);
-
-        if ($count > 0) {
-            usort($opts, function ($a, $b) use ($in) {
-                similar_text($in, $b, $percentB);
-                similar_text($in, $a, $percentA);
-                return $percentB <=> $percentA;
-            });
-
-            echo PHP_EOL . "Suggestions: " . implode(" | ", $opts) . PHP_EOL;
-            echo "> " . $in;
-        }
-
-        return $count >= 1 ? [$in, ...$opts] : [$in];
-    }
-
-    /**
-     * Single completer that adapts based on current context
-     */
-    public function contextAwareCompleter(string $input, int $index): array
-    {
-        switch ($this->completionContext) {
-            case CompletionContext::ENTITY->value:
-                return $this->completeEntityName($input, $index);
-            case CompletionContext::FIELD->value:
-                return $this->readlineComplete($input, $index);
-            case CompletionContext::RELATION->value:
-                return $this->readlineComplete($input, $index);
-            default:
-                return [];
-        }
-    }
-
-    private function setCompletionContext(CompletionContext $context, array $completions = []): void
-    {
-        $this->completionContext = $context->value;
-        $this->contextAwareCompletions[$context->value] = $completions;
-    }
-
-    /**
-     * Completes entity names based on the input.
-     *
-     * This method provides suggestions for entity names based on the input string.
-     * It uses various inflection methods to generate possible variants of the input.
-     *
-     * @param string $in The input string to complete.
-     * @param int $i The index of the input (not used here).
-     * @return array An array of suggestions including the original input.
-     */
-    public function completeEntityName(string $in, int $i): array
-    {
-        $returnOpts = $this->contextAwareCompletions[CompletionContext::ENTITY->value] ?? [];
-        if (empty($returnOpts)) {
-            return [$in];
-        }
-        if (empty($in)) {
-            echo PHP_EOL . "Suggestions: " . implode(" | ", $returnOpts) . PHP_EOL;
-            echo "> " . $in;
-            return $returnOpts;
-        }
-
-        $inputVariants = [
-            $in,
-            $this->inflector->tableize($in),
-            $this->inflector->classify($in),
-            $this->inflector->pluralize($in),
-            $this->inflector->pluralize($this->inflector->tableize($in)),
-            $this->inflector->classify($this->inflector->pluralize($in)),
-        ];
-
-        $opts = array_filter($returnOpts, function ($entity) use ($inputVariants) {
-            $normalizedEntity = strtolower($this->inflector->tableize($entity));
-            foreach ($inputVariants as $variant) {
-                if ($variant === null) continue;
-                $variantNorm = strtolower($variant);
-                if (strpos($normalizedEntity, $variantNorm) !== false) {
-                    return true;
-                }
-            }
-            return false;
-        });
-
-        $count = count($opts);
-
-        if ($count > 0) {
-            usort($opts, function ($a, $b) use ($in) {
-                similar_text($in, $b, $percentB);
-                similar_text($in, $a, $percentA);
-                return $percentB <=> $percentA;
-            });
-
-            echo PHP_EOL . "Suggestions: " . implode(" | ", $opts) . PHP_EOL;
-            echo "> " . $in;
-        }
-
-        return $count >= 1 ? [$in, ...$opts] : [$in];
-    }
-
-    /**
-     * Checks if the input string matches any of the options in a fuzzy manner.
-     *
-     * @param string $input The input string to match against options.
-     * @param string $option The option to check against.
-     * @return bool True if the input matches the option, false otherwise.
-     */
-    private function fuzzyMatch(string $input, string $option): bool
-    {
-        return stripos($option, $input) !== false;
+        return array_filter($this->completions, fn($o) => str_starts_with($o, $in));
     }
 
     /**
@@ -551,6 +570,7 @@ final class MakeEntityCommand extends Command
     private function chooseOption(string $kind, array $opts): string
     {
         foreach ($opts as $i => $o) $this->line(sprintf("  [%2d] %s", $i + 1, $o));
+        $this->completions = $opts;
         while (true) {
             $sel = $this->ask("Select $kind");
             if (ctype_digit($sel) && isset($opts[$sel - 1])) return $opts[$sel - 1];
@@ -706,6 +726,27 @@ final class MakeEntityCommand extends Command
     {
         return strtolower(
             preg_replace('/([a-z])([A-Z])/', '\$1_\$2', $class)
+        );
+    }
+
+    /**
+     * Insert a string before the constructor in the class body.
+     *
+     * This method uses a regular expression to find the constructor definition
+     * and inserts the provided string before it.
+     *
+     * @param string $body  The class body where the constructor is located.
+     * @param string $inject The string to insert before the constructor.
+     *
+     * @return string The modified class body with the injected string.
+     */
+    private function insertBeforeConstructor(string $body, string $inject): string
+    {
+        return preg_replace(
+            '/(public function __construct\(\)\s*\{)/',
+            preg_replace('/^ {4}/', '', $inject) . "\n\n    $1",
+            $body,
+            1
         );
     }
 }
