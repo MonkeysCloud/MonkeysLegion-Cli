@@ -10,6 +10,7 @@
     "ext-ctype": "*",
     "ext-readline": "*",
     "ext-pdo": "*",
+    "nikic/php-parser": "^5.5",
     "monkeyscloud/monkeyslegion-core": "^1.0",
     "monkeyscloud/monkeyslegion-di": "^1.0",
     "monkeyscloud/monkeyslegion-entity": "^1.0",
@@ -28,5 +29,8 @@
     "branch-alias": {
       "dev-main": "1.0.x-dev"
     }
+  },
+  "require-dev": {
+    "phpstan/phpstan": "^2.1"
   }
 }
