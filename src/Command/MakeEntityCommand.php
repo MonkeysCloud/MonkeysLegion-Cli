@@ -169,7 +169,7 @@ final class MakeEntityCommand extends Command
      */
     private function wizardField(array $existing, array &$out): void
     {
-        $prop = $this->ask('  Field name');
+        $prop = $this->ask('  Field name: ');
         if ($prop === '' || isset($existing[$prop]) || isset($out[$prop])) return;
         if (!preg_match('/^[a-z][A-Za-z0-9_]*$/', $prop)) {
             $this->error('Invalid.');
@@ -492,7 +492,7 @@ final class MakeEntityCommand extends Command
                     $meth,
                     $d['other_prop'],
                     $d['joinTable'] ?? null,           // Keep from incoming
-                    $this->hasProperty($body, $d['prop']), // Keep from incoming
+                    $this->hasProperty($body, $d['prop']), // Keep from incoming  
                     $d['inverse_o2o'] ?? false,        // Keep from incoming
                 );
             }
@@ -557,7 +557,15 @@ final class MakeEntityCommand extends Command
      */
     public function readlineComplete(string $in, int $i): array
     {
-        return array_filter($this->completions, fn($o) => str_starts_with($o, $in));
+        $opts = array_filter($this->completions, fn($o) => str_starts_with($o, $in));
+        $count = count($opts);
+
+        if ($count >= 1) {
+            echo PHP_EOL . implode(" | ", $opts) . PHP_EOL;
+            echo "> " . $in;
+        }
+
+        return $count >= 1 ? [$in, ...$opts] : [$in];
     }
 
     /**

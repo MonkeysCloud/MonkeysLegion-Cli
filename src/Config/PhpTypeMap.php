@@ -2,65 +2,67 @@
 
 namespace MonkeysLegion\Cli\Config;
 
+/**
+ * Maps database types to PHP types.
+ *
+ * @return array<string, string>
+ */
 class PhpTypeMap
 {
-    private ?array $map = null;
 
     /**
-     * Returns a mapping of FieldType cases to PHP types.
+     * Returns a mapping of database types to PHP types.
      *
-     * @return array<FieldType, string>
+     * @return array<string, string>
      */
     public function all(): array
     {
-        // Lazy initialization of the map to avoid unnecessary memory usage
-        return $this->map ??= [
-            FieldType::STRING->value => 'string',
-            FieldType::CHAR->value => 'string',
-            FieldType::TEXT->value => 'string',
-            FieldType::MEDIUM_TEXT->value => 'string',
-            FieldType::LONG_TEXT->value => 'string',
-            FieldType::INTEGER->value => 'int',
-            FieldType::TINY_INT->value => 'int',
-            FieldType::SMALL_INT->value => 'int',
-            FieldType::BIG_INT->value => 'int',
-            FieldType::UNSIGNED_BIG_INT->value => 'int',
-            FieldType::DECIMAL->value => 'float',
-            FieldType::FLOAT->value => 'float',
-            FieldType::BOOLEAN->value => 'bool',
-            FieldType::YEAR->value => 'int',
-            FieldType::DATE->value => '\DateTimeImmutable',
-            FieldType::TIME->value => '\DateTimeImmutable',
-            FieldType::DATETIME->value => '\DateTimeImmutable',
-            FieldType::DATETIMETZ->value => '\DateTimeImmutable',
-            FieldType::TIMESTAMP->value => '\DateTimeImmutable',
-            FieldType::TIMESTAMPTZ->value => '\DateTimeImmutable',
-            FieldType::JSON->value => 'array',
-            FieldType::SIMPLE_JSON->value => 'array',
-            FieldType::ARRAY->value => 'array',
-            FieldType::SIMPLE_ARRAY->value => 'array',
-            FieldType::SET->value => 'array',
-            FieldType::UUID->value => 'string',
-            FieldType::BINARY->value => 'string',
-            FieldType::ENUM->value => 'string',
-            FieldType::GEOMETRY->value => 'string',
-            FieldType::POINT->value => 'string',
-            FieldType::LINESTRING->value => 'string',
-            FieldType::POLYGON->value => 'string',
-            FieldType::IP_ADDRESS->value => 'string',
-            FieldType::MAC_ADDRESS->value => 'string',
+        return [
+            'string' => 'string',
+            'char' => 'string',
+            'text' => 'string',
+            'mediumText' => 'string',
+            'longText' => 'string',
+            'integer' => 'int',
+            'tinyInt' => 'int',
+            'smallInt' => 'int',
+            'bigInt' => 'int',
+            'unsignedBigInt' => 'int',
+            'decimal' => 'float',
+            'float' => 'float',
+            'boolean' => 'bool',
+            'year' => 'int',
+            'date' => '\DateTimeImmutable',
+            'time' => '\DateTimeImmutable',
+            'datetime' => '\DateTimeImmutable',
+            'datetimetz' => '\DateTimeImmutable',
+            'timestamp' => '\DateTimeImmutable',
+            'timestamptz' => '\DateTimeImmutable',
+            'json' => 'array',
+            'simple_json' => 'array',
+            'array' => 'array',
+            'simple_array' => 'array',
+            'set' => 'array',
+            'uuid' => 'string',
+            'binary' => 'string',
+            'enum' => 'string',
+            'geometry' => 'string',
+            'point' => 'string',
+            'linestring' => 'string',
+            'polygon' => 'string',
+            'ipAddress' => 'string',
+            'macAddress' => 'string',
         ];
     }
 
     /**
-     * Maps a FieldType to its corresponding PHP type.
+     * Maps a database type to its corresponding PHP type.
      *
-     * @param FieldType $dbType The database type to map.
-     * @return string The corresponding PHP type
+     * @param string $dbType The database type to map.
+     * @return string The corresponding PHP type, or 'mixed' if not found.
      */
-    public function map(FieldType $dbType): string
+    public function map(string $dbType): string
     {
-        $t = $dbType->value;
-        return $this->all()[$t] ?? $t;
+        return $this->all()[$dbType] ?? 'mixed';
     }
 }
