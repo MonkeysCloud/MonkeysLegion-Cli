@@ -193,7 +193,8 @@ final class MakeEntityCommand extends Command
         }
         foreach ($this->relNames as $p => $m) {
             $short = substr($m['target'], strrpos($m['target'], '\\') + 1);
-            $isMany = in_array($m['attr'], $this->inverseShouldBePlural, true);
+            $arr_check = [RelationKind::ONE_TO_MANY->value, RelationKind::MANY_TO_MANY->value];
+            $isMany = in_array(lcfirst($m['attr']), $arr_check, true);
             $manipulator->addRelation(
                 $p,
                 $m['attr'],
@@ -388,7 +389,8 @@ final class MakeEntityCommand extends Command
 
             foreach ($defs as $d) {
                 $targetClass = substr($d['target'], strrpos($d['target'], '\\') + 1);
-                $isMany = in_array($d['attr'], $this->inverseShouldBePlural, true);
+                $arr_check = [RelationKind::ONE_TO_MANY->value, RelationKind::MANY_TO_MANY->value];
+                $isMany = in_array(lcfirst($d['attr']), $arr_check, true);
 
                 if ($d['prop'] === 'id' && $isMany) {
                     $d['prop'] = lcfirst($this->inflector->pluralize($targetClass));

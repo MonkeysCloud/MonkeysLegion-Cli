@@ -12,6 +12,7 @@ use PhpParser\Node\Stmt\Property;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node;
 use MonkeysLegion\Entity\Attributes\JoinTable;
+use PhpParser\Modifiers;
 
 class ClassManipulator
 {
@@ -91,70 +92,78 @@ class ClassManipulator
             return;
         }
 
-        $args = [
-            new Node\Arg(
-                new Node\Expr\ClassConstFetch(new Node\Name($targetShort), 'class'),
-                false,
-                false,
-                [],
-                new Node\Identifier('targetEntity')
-            )
-        ];
+        // Build extra attribute arguments
+        $extra = '';
         if ($attr === RelationKind::ONE_TO_ONE->value && $inverseO2O && $otherProp) {
-            $args[] = new Node\Arg(
-                new Node\Scalar\String_($otherProp),
-                false,
-                false,
-                [],
-                new Node\Identifier('mappedBy')
-            );
+            $extra .= ", mappedBy: '{$otherProp}'";
         } elseif ($otherProp) {
-            $args[] = new Node\Arg(
-                new Node\Scalar\String_($otherProp),
-                false,
-                false,
-                [],
-                new Node\Identifier(
-                    in_array($attr, $this->owningShouldBePlural, true)
-                        ? 'mappedBy'
-                        : 'inversedBy'
-                )
-            );
+            $extra .= in_array($attr, $this->owningShouldBePlural, true)
+                ? ", mappedBy: '{$otherProp}'"
+                : ", inversedBy: '{$otherProp}'";
         }
         if ($attr === RelationKind::MANY_TO_MANY->value && $joinTable) {
-            $args[] = new Node\Arg(
-                new Node\Expr\New_(
-                    new Node\Name('JoinTable'),
-                    [
-                        new Node\Arg(new Node\Scalar\String_($joinTable->name), false, false, [], new Node\Identifier('name')),
-                        new Node\Arg(new Node\Scalar\String_($joinTable->joinColumn), false, false, [], new Node\Identifier('joinColumn')),
-                        new Node\Arg(new Node\Scalar\String_($joinTable->inverseColumn), false, false, [], new Node\Identifier('inverseColumn')),
-                    ]
-                ),
-                false,
-                false,
-                [],
-                new Node\Identifier('joinTable')
-            );
+            $extra .= ", joinTable: new JoinTable(name: '{$joinTable->name}', joinColumn: '{$joinTable->joinColumn}', inverseColumn: '{$joinTable->inverseColumn}')";
         }
 
-        $attrNode = $this->builderFactory->attribute($attr, $args);
-
-        $type = $isMany ? 'array' : '?' . $targetShort;
-        $propBuilder = $this->builderFactory->property($name)
-            ->makePublic()
-            ->addAttribute($attrNode)
-            ->setType($type);
-
+        // Build docblock and property as string (for pretty output)
+        $props = [];
+        $ctor = [];
         if ($isMany) {
-            $propBuilder->setDefault([]);
-        } else {
-            $propBuilder->setDefault(null);
-        }
+            $props[] = "    /** @var {$targetShort}[] */";
+            $props[] = "    #[{$attr}(targetEntity: {$targetShort}::class{$extra})]";
+            $props[] = "    public array \${$name};";
+            $ctor[]  = "        \$this->{$name} = [];";
 
-        $prop = $propBuilder->getNode();
+            // Insert docblock as comment
+            $docComment = "/** @var {$targetShort}[] */";
+            $propNode = $this->builderFactory->property($name)
+                ->makePublic()
+                ->setType('array')
+                ->setDefault([])
+                ->addAttribute(
+                    $this->builderFactory->attribute($attr, [
+                        new Node\Arg(
+                            new Node\Expr\ClassConstFetch(new Node\Name($targetShort), 'class'),
+                            false,
+                            false,
+                            [],
+                            new Node\Identifier('targetEntity')
+                        ),
+                        // extra args as named arguments
+                        ...$this->buildExtraArgs($otherProp, $attr, $isMany, $joinTable, $inverseO2O)
+                    ])
+                )
+                ->setDocComment($docComment)
+                ->getNode();
+        } else {
+            $props[] = "    #[{$attr}(targetEntity: {$targetShort}::class{$extra})]";
+            $props[] = "    public ?{$targetShort} \${$name} = null;";
+
+            $propNode = $this->builderFactory->property($name)
+                ->makePublic()
+                ->setType('?' . $targetShort)
+                ->setDefault(null)
+                ->addAttribute(
+                    $this->builderFactory->attribute($attr, [
+                        new Node\Arg(
+                            new Node\Expr\ClassConstFetch(new Node\Name($targetShort), 'class'),
+                            false,
+                            false,
+                            [],
+                            new Node\Identifier('targetEntity')
+                        ),
+                        ...$this->buildExtraArgs($otherProp, $attr, $isMany, $joinTable, $inverseO2O)
+                    ])
+                )
+                ->getNode();
+        }
         $this->removeProperty($name);
-        $this->insertProperty($prop);
+        $this->insertProperty($propNode);
+
+        // Add initialization to constructor for collections, but do NOT overwrite existing constructor
+        if ($isMany) {
+            $this->addCollectionInitToConstructor($name);
+        }
 
         // Methods
         $stud = ucfirst($name);
@@ -246,6 +255,104 @@ class ClassManipulator
         }
     }
 
+    /**
+     * Helper to build extra named arguments for relation attributes.
+     */
+    private function buildExtraArgs($otherProp, $attr, $isMany, $joinTable, $inverseO2O)
+    {
+        $args = [];
+        if ($attr === RelationKind::ONE_TO_ONE->value && $inverseO2O && $otherProp) {
+            $args[] = new Node\Arg(
+                new Node\Scalar\String_($otherProp),
+                false,
+                false,
+                [],
+                new Node\Identifier('mappedBy')
+            );
+        } elseif ($otherProp) {
+            $args[] = new Node\Arg(
+                new Node\Scalar\String_($otherProp),
+                false,
+                false,
+                [],
+                new Node\Identifier(
+                    in_array($attr, $this->owningShouldBePlural, true)
+                        ? 'mappedBy'
+                        : 'inversedBy'
+                )
+            );
+        }
+        if ($attr === RelationKind::MANY_TO_MANY->value && $joinTable) {
+            $args[] = new Node\Arg(
+                new Node\Expr\New_(
+                    new Node\Name('JoinTable'),
+                    [
+                        new Node\Arg(new Node\Scalar\String_($joinTable->name), false, false, [], new Node\Identifier('name')),
+                        new Node\Arg(new Node\Scalar\String_($joinTable->joinColumn), false, false, [], new Node\Identifier('joinColumn')),
+                        new Node\Arg(new Node\Scalar\String_($joinTable->inverseColumn), false, false, [], new Node\Identifier('inverseColumn')),
+                    ]
+                ),
+                false,
+                false,
+                [],
+                new Node\Identifier('joinTable')
+            );
+        }
+        return $args;
+    }
+
+    /**
+     * Adds initialization for a collection property in the constructor, without overwriting or duplicating.
+     */
+    private function addCollectionInitToConstructor(string $propName)
+    {
+        $ctor = null;
+        foreach ($this->classNode->stmts as $stmt) {
+            if ($stmt instanceof ClassMethod && $stmt->name->toString() === '__construct') {
+                $ctor = $stmt;
+                break;
+            }
+        }
+        if (!$ctor) {
+            $ctor = new ClassMethod('__construct', [
+                'flags' => Modifiers::PUBLIC,
+                'stmts' => [],
+            ]);
+            $this->insertMethod($ctor);
+        }
+        // Check if already initialized
+        foreach ($ctor->stmts as $s) {
+            if (
+                $s instanceof Node\Stmt\Expression &&
+                $s->expr instanceof Node\Expr\Assign &&
+                $s->expr->var instanceof Node\Expr\PropertyFetch &&
+                $s->expr->var->var instanceof Node\Expr\Variable &&
+                $s->expr->var->var->name === 'this' &&
+                $s->expr->var->name instanceof Node\Identifier &&
+                $s->expr->var->name->name === $propName
+            ) {
+                return;
+            }
+            // Also handle direct assignment (not wrapped in Expression)
+            if (
+                $s instanceof Node\Expr\Assign &&
+                $s->var instanceof Node\Expr\PropertyFetch &&
+                $s->var->var instanceof Node\Expr\Variable &&
+                $s->var->var->name === 'this' &&
+                $s->var->name instanceof Node\Identifier &&
+                $s->var->name->name === $propName
+            ) {
+                return;
+            }
+        }
+        $ctor->stmts[] = new Node\Stmt\Expression(
+            new Node\Expr\Assign(
+                new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $propName),
+                new Node\Expr\Array_([])
+            )
+        );
+    }
+
     private function removeProperty(string $name)
     {
         $stmts = &$this->classNode->stmts;
@@ -258,7 +365,47 @@ class ClassManipulator
     {
         $stmts = &$this->classNode->stmts;
         $insertIndex = $this->findPropertyInsertionPoint($stmts);
+
+        // Remove blank lines immediately before/after the insertion point to avoid duplicates
+        if ($insertIndex > 0 && $this->isBlankLine($stmts[$insertIndex - 1])) {
+            array_splice($stmts, $insertIndex - 1, 1);
+            $insertIndex--;
+        }
+        if (isset($stmts[$insertIndex]) && $this->isBlankLine($stmts[$insertIndex])) {
+            array_splice($stmts, $insertIndex, 1);
+        }
+
+        // Always insert a blank line before the property except for the very first property (usually 'id')
+        if ($insertIndex > 0) {
+            if ($stmts[$insertIndex - 1] instanceof Property) {
+                array_splice($stmts, $insertIndex, 0, [$this->newLineNode()]);
+                $insertIndex++;
+            }
+        }
+
         array_splice($stmts, $insertIndex, 0, [$prop]);
+        $insertIndex++;
+
+        // Always insert a blank line after the property unless next is already blank or method
+        if (!isset($stmts[$insertIndex]) || !$this->isBlankLine($stmts[$insertIndex])) {
+            array_splice($stmts, $insertIndex, 0, [$this->newLineNode()]);
+        }
+    }
+
+    /**
+     * Returns a node that will be rendered as a blank line in the output.
+     */
+    private function newLineNode(): Node
+    {
+        return new \PhpParser\Node\Stmt\Nop();
+    }
+
+    /**
+     * Checks if a node is a blank line (Nop).
+     */
+    private function isBlankLine($node): bool
+    {
+        return $node instanceof \PhpParser\Node\Stmt\Nop;
     }
 
     private function insertMethod(ClassMethod $method)
