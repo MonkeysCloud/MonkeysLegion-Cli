@@ -14,6 +14,8 @@ use MonkeysLegion\Cli\Config\FieldType;
 use MonkeysLegion\Cli\Config\RelationKind;
 use MonkeysLegion\Cli\Helpers\Identifier;
 use MonkeysLegion\Cli\Service\ClassManipulator;
+use PhpParser\ParserFactory;
+use PhpParser\NodeFinder;
 
 enum CompletionContext: string
 {
@@ -130,11 +132,11 @@ final class MakeEntityCommand extends Command
 
         /* 3️⃣  scan existing props */
         $src = file_get_contents($file);
-        $ast = (new \PhpParser\ParserFactory())->createForNewestSupportedVersion()->parse($src);
+        $ast = (new ParserFactory())->createForNewestSupportedVersion()->parse($src);
         $existingFields = [];
         $existingRels = [];
         if ($ast) {
-            $class = (new \PhpParser\NodeFinder())->findFirstInstanceOf($ast, \PhpParser\Node\Stmt\Class_::class);
+            $class = (new NodeFinder())->findFirstInstanceOf($ast, \PhpParser\Node\Stmt\Class_::class);
             if ($class) {
                 foreach ($class->stmts as $stmt) {
                     if ($stmt instanceof \PhpParser\Node\Stmt\Property) {
@@ -182,29 +184,36 @@ final class MakeEntityCommand extends Command
         }
 
         /* 6️⃣  build fragments and inject via ClassManipulator */
-        foreach ($this->fieldNames as $p => $t) {
+        foreach ($this->fieldNames as $p => $def) {
+            if (!is_array($def)) {
+                // backward compatibility in case any old entries exist
+                $def = ['db' => (string)$def, 'nullable' => false];
+            }
+            $t = $def['db'];
+            $nullable = (bool)($def['nullable'] ?? false);
+
             $fieldType = FieldType::tryFrom($t);
             if (!$fieldType) {
                 $this->error("Unknown field type '$t' for property '$p'.");
                 continue;
             }
             $phpType = $this->phpTypeMap->map($fieldType);
-            $manipulator->addScalarField($p, $t, $phpType);
+            $manipulator->addScalarField($p, $t, $phpType, $nullable);
         }
         foreach ($this->relNames as $p => $m) {
             $short = substr($m['target'], strrpos($m['target'], '\\') + 1);
             $kindEnum = $m['attr'] instanceof RelationKind ? $m['attr'] : ClassManipulator::toEnum($m['attr']);
             $isMany   = in_array($kindEnum, [RelationKind::ONE_TO_MANY, RelationKind::MANY_TO_MANY], true);
 
-            $owning = $m['owning'] ?? ($m['other_prop'] !== null);
             $manipulator->addRelation(
                 $p,
                 $kindEnum,
                 $short,
-                $isMany,
+                $m['owning'] ?? true,
                 $m['other_prop'] ?? null,
                 $m['joinTable'] ?? null,
-                $kindEnum === RelationKind::ONE_TO_ONE && !empty($m['other_prop']) && !$owning
+                $kindEnum === RelationKind::ONE_TO_ONE && !($m['owning'] ?? true),
+                $m['nullable'] ?? true
             );
         }
         $manipulator->save();
@@ -240,7 +249,11 @@ final class MakeEntityCommand extends Command
 
         $this->setCompletionContext(CompletionContext::FIELD, $this->fieldTypes);
         $type = $this->chooseOption('field', $this->fieldTypes);
-        $this->fieldNames[$prop] = $type;
+        $nullable = strtolower($this->ask('  Nullable? [y/N]')) === 'y';
+        $this->fieldNames[$prop] = [
+            'db'       => $type,
+            'nullable' => $nullable,
+        ];
         $this->info("  ➕  $prop:$type added.");
     }
 
@@ -259,8 +272,20 @@ final class MakeEntityCommand extends Command
         $this->setCompletionContext(CompletionContext::RELATION, array_keys($opts));
         $kind = $this->chooseOption('relation', array_keys($opts));
         $relCase = $this->relTypes->tryFrom($kind);
-        $attr   = $relCase->value;
+        $attr = $relCase->value;
         $attrUC = $kind;
+        $isCollection = in_array(
+            $attr,
+            [RelationKind::ONE_TO_MANY->value, RelationKind::MANY_TO_MANY->value],
+            true
+        );
+        if ($isCollection) {
+            // collections always get initialized to [] so never nullable
+            $nullable = false;
+        } else {
+            // to-one relations: ask the user
+            $nullable = strtolower($this->ask('  Is this relation optional/nullable? [y/N]')) === 'y';
+        }
 
         /* target entity */
         $entities = array_map(
@@ -299,11 +324,17 @@ final class MakeEntityCommand extends Command
                 sort($arr);
                 $default = implode('_', $arr);
 
-                $tbl  = $this->ask("  Join table name [$default]") ?: $default;
-                $colA = $this->ask("  Column for {$selfClass} [{$arr[0]}_id]")  ?: "{$arr[0]}_id";
-                $colB = $this->ask("  Column for {$short} [{$arr[1]}_id]")      ?: "{$arr[1]}_id";
+                $tbl = $this->ask("  Join table name [$default]") ?: $default;
+                $colA = $this->ask("  Column for {$selfClass} [{$arr[0]}_id]") ?: "{$arr[0]}_id";
+                $colB = $this->ask("  Column for {$short} [{$arr[1]}_id]") ?: "{$arr[1]}_id";
                 $joinTable = new JoinTable(name: $tbl, joinColumn: $colA, inverseColumn: $colB);
+                if (!in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
+                    $nullable = strtolower($this->ask('  Is this relation optional/nullable? [y/N]')) === 'y';
+                }
+            } else {
+                $owning = true;
             }
+            $nullable = false;
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
         if ($prop === '' || isset($existing[$prop]) || isset($this->relNames[$prop])) return;
@@ -323,19 +354,18 @@ final class MakeEntityCommand extends Command
                 $defName = $base;
             }
 
-            $attr = ucfirst($relCase->value);
-            $isInverseOneToOne = $attr === ucfirst(RelationKind::ONE_TO_ONE->value) && !empty($inverseProp);
             $inverseProp = $this->ask("  Inverse property in $short [{$defName}]") ?: $defName;
-            $invAttr = ucfirst($invRelationKind->value);
-            $selfClass = "App\\Entity\\$selfClass";
+            $isInverseOneToOne = $relCase === RelationKind::ONE_TO_ONE;
+            $fqSelf = "App\\Entity\\$selfClass";
             $this->queueInverse(
                 $fqcn,
                 $inverseProp,
-                $invAttr,
-                $selfClass,
+                $invRelationKind->value,
+                $fqSelf,
                 $prop,
                 $isInverseOneToOne,
             );
+            $owning = true;
         }
 
         $this->relNames[$prop] = [
@@ -343,11 +373,14 @@ final class MakeEntityCommand extends Command
             'target'     => $fqcn,
             'other_prop' => $inverseProp,
             'joinTable'  => $joinTable,
+            'nullable'   => $nullable,
             'owning'     => true,
         ];
 
-        $this->info("  ➕  $selfClass::$prop ($attrUC) --> $fqcn");
-        $this->info("  ➕  $fqcn::$inverseProp ($invAttr) <-- $selfClass");
+        $this->info("  ➕  $selfClass::$prop ($kind) --> $fqcn");
+        if ($inverseProp) {
+            $this->info("  ↪  inverse in $fqcn::$inverseProp ({$invRelationKind->value})");
+        }
     }
 
     /**
@@ -392,20 +425,21 @@ final class MakeEntityCommand extends Command
 
             foreach ($defs as $d) {
                 $targetClass = substr($d['target'], strrpos($d['target'], '\\') + 1);
-                $arr_check = [RelationKind::ONE_TO_MANY->value, RelationKind::MANY_TO_MANY->value];
-                $isMany = in_array(lcfirst($d['attr']), $arr_check, true);
+                $kindEnum = $d['attr'] instanceof RelationKind ? $d['attr'] : ClassManipulator::toEnum($d['attr']);
+                $isMany   = in_array($kindEnum, [RelationKind::ONE_TO_MANY, RelationKind::MANY_TO_MANY], true);
                 if ($d['prop'] === 'id' && $isMany) {
                     $d['prop'] = lcfirst($this->inflector->pluralize($targetClass));
                 }
 
                 $manipulator->addRelation(
                     $d['prop'],
-                    $d['attr'],
+                    $kindEnum,
                     $targetClass,
                     false,
                     $d['other_prop'] ?? null,
                     $d['joinTable'] ?? null,
-                    $d['inverse_o2o'] ?? false
+                    $d['inverse_o2o'] ?? false,
+                    true
                 );
             }
             $manipulator->save();
