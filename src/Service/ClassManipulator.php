@@ -3,6 +3,7 @@
 namespace MonkeysLegion\Cli\Service;
 
 use MonkeysLegion\Cli\Config\RelationKind;
+use PhpParser\Node\Stmt\Nop;
 use PhpParser\ParserFactory;
 use PhpParser\BuilderFactory;
 use PhpParser\PrettyPrinter\Standard;
@@ -14,6 +15,10 @@ use PhpParser\Node;
 use MonkeysLegion\Entity\Attributes\JoinTable;
 use PhpParser\Modifiers;
 
+/**
+ * ClassManipulator is a utility class for manipulating PHP classes using the PhpParser library.
+ * It allows adding fields, relations, and methods to classes, and saving the modified class back to a file.
+ */
 class ClassManipulator
 {
     private $parser;
@@ -23,14 +28,37 @@ class ClassManipulator
     private $ast;
     private $classNode;
     private $file;
-    private array $owningShouldBePlural = [
-        RelationKind::MANY_TO_ONE->value,
-        RelationKind::MANY_TO_MANY->value,
+
+    /**
+     * Mapping of attribute names to RelationKind enums.
+     * This is used to convert string attributes to enum values.
+     */
+    private const array ATTR_TO_ENUM = [
+        'OneToOne'   => RelationKind::ONE_TO_ONE,
+        'OneToMany'  => RelationKind::ONE_TO_MANY,
+        'ManyToOne'  => RelationKind::MANY_TO_ONE,
+        'ManyToMany' => RelationKind::MANY_TO_MANY,
     ];
 
+    /**
+     * Collection kinds that are treated as arrays (ONE_TO_MANY, MANY_TO_MANY).
+     * This is used to determine how to handle relations in the class.
+     */
+    private const array COLLECTION_KINDS = [
+        RelationKind::ONE_TO_MANY,
+        RelationKind::MANY_TO_MANY,
+    ];
+
+    /**
+     * ClassManipulator constructor.
+     * Initializes the parser, builder factory, pretty printer, and node finder.
+     * Parses the given file to create an AST and finds the first class node.
+     *
+     * @param string $file The path to the PHP file to manipulate.
+     */
     public function __construct(string $file)
     {
-        $this->parser = (new ParserFactory())->createForNewestSupportedVersion();
+        $this->parser = new ParserFactory()->createForNewestSupportedVersion();
         $this->builderFactory = new BuilderFactory();
         $this->prettyPrinter = new Standard();
         $this->nodeFinder = new NodeFinder();
@@ -41,7 +69,15 @@ class ClassManipulator
         $this->classNode = $this->ast ? $this->nodeFinder->findFirstInstanceOf($this->ast, Class_::class) : null;
     }
 
-    public function addScalarField(string $name, string $dbType, string $phpType)
+    /**
+     * Adds a scalar field to the class with the specified name, database type, and PHP type.
+     * This will create a public property with a Field attribute, and generate getter/setter methods.
+     *
+     * @param string $name The name of the field.
+     * @param string $dbType The database type (e.g., 'integer', 'string').
+     * @param string $phpType The PHP type (e.g., 'int', 'string').
+     */
+    public function addScalarField(string $name, string $dbType, string $phpType): void
     {
         $attr = $this->builderFactory->attribute('Field', ['type' => $dbType]);
         $prop = $this->builderFactory->property($name)
@@ -79,29 +115,47 @@ class ClassManipulator
         $this->insertMethod($setter);
     }
 
+    /**
+     * Adds a relation to the class with the specified parameters.
+     * This will create a public property with the appropriate relation attribute,
+     * and generate methods for accessing and modifying the relation.
+     *
+     * @param string $name The name of the relation property.
+     * @param RelationKind|string $kind The kind of relation (e.g., ONE_TO_ONE, MANY_TO_MANY).
+     * @param string $targetShort The short name of the target entity class.
+     * @param bool $isOwningSide Whether this is the owning side of the relation.
+     * @param string|null $otherProp The name of the other property in the related entity, if applicable.
+     * @param JoinTable|null $joinTable The join table definition for MANY_TO_MANY relations, if applicable.
+     * @param bool $inverseO2O Whether this is an inverse one-to-one relation.
+     */
     public function addRelation(
         string $name,
-        string $attr,
+        RelationKind|string $kind,
         string $targetShort,
-        bool $isMany,
+        bool $isOwningSide,
         ?string $otherProp = null,
         ?JoinTable $joinTable = null,
         bool $inverseO2O = false
-    ) {
+    ): void {
+        $kind   = self::toEnum($kind);
+        $attr   = $kind->value;
+        $isMany = in_array($kind, self::COLLECTION_KINDS, true);
+
         if (!preg_match('/^[A-Z][A-Za-z0-9_]*$/', $targetShort)) {
             return;
         }
 
         // Build extra attribute arguments
         $extra = '';
-        if ($attr === RelationKind::ONE_TO_ONE->value && $inverseO2O && $otherProp) {
+        if ($kind === RelationKind::ONE_TO_ONE && $inverseO2O && $otherProp) {
             $extra .= ", mappedBy: '{$otherProp}'";
         } elseif ($otherProp) {
-            $extra .= in_array($attr, $this->owningShouldBePlural, true)
-                ? ", mappedBy: '{$otherProp}'"
-                : ", inversedBy: '{$otherProp}'";
+            // owning side ⇒ inversedBy; inverse side ⇒ mappedBy
+            $extra .= $isOwningSide
+                ? ", inversedBy: '{$otherProp}'"
+                : ", mappedBy: '{$otherProp}'";
         }
-        if ($attr === RelationKind::MANY_TO_MANY->value && $joinTable) {
+        if ($kind === RelationKind::MANY_TO_MANY && $isOwningSide && $joinTable) {
             $extra .= ", joinTable: new JoinTable(name: '{$joinTable->name}', joinColumn: '{$joinTable->joinColumn}', inverseColumn: '{$joinTable->inverseColumn}')";
         }
 
@@ -130,7 +184,7 @@ class ClassManipulator
                             new Node\Identifier('targetEntity')
                         ),
                         // extra args as named arguments
-                        ...$this->buildExtraArgs($otherProp, $attr, $isMany, $joinTable, $inverseO2O)
+                        ...$this->buildExtraArgs($otherProp, $kind, $isMany, $joinTable, $inverseO2O, $isOwningSide)
                     ])
                 )
                 ->setDocComment($docComment)
@@ -152,7 +206,7 @@ class ClassManipulator
                             [],
                             new Node\Identifier('targetEntity')
                         ),
-                        ...$this->buildExtraArgs($otherProp, $attr, $isMany, $joinTable, $inverseO2O)
+                        ...$this->buildExtraArgs($otherProp, $kind, $isMany, $joinTable, $inverseO2O, $isOwningSide)
                     ])
                 )
                 ->getNode();
@@ -219,7 +273,7 @@ class ClassManipulator
             // getter
             $getter = $this->builderFactory->method('get' . $stud)
                 ->makePublic()
-                ->setReturnType($targetShort)
+                ->setReturnType('?' . $targetShort)
                 ->addStmt(new Node\Stmt\Return_(
                     new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name)
                 ))
@@ -256,12 +310,29 @@ class ClassManipulator
     }
 
     /**
-     * Helper to build extra named arguments for relation attributes.
+     * Builds the extra arguments for the relation attribute based on the provided parameters.
+     * This handles special cases like mappedBy, inversedBy, and joinTable for many-to-many relations.
+     *
+     * @param string|null $otherProp The name of the other property in the related entity, if applicable.
+     * @param RelationKind|string $attr The relation kind or attribute name.
+     * @param bool $isMany Whether this is a many-to-many or one-to-many relation.
+     * @param JoinTable|null $joinTable The join table definition for many-to-many relations, if applicable.
+     * @param bool $inverseO2O Whether this is an inverse one-to-one relation.
+     * @param bool $isOwningSide Whether this is the owning side of the relation.
+     * @return Node\Arg[] The array of arguments to be added to the attribute.
      */
-    private function buildExtraArgs($otherProp, $attr, $isMany, $joinTable, $inverseO2O)
+    private function buildExtraArgs(
+        ?string             $otherProp,
+        RelationKind|string $attr,
+        bool                $isMany,
+        ?JoinTable          $joinTable,
+        bool                $inverseO2O,
+        bool                $isOwningSide = false
+    ): array
     {
+        $attrEnum = self::toEnum($attr);
         $args = [];
-        if ($attr === RelationKind::ONE_TO_ONE->value && $inverseO2O && $otherProp) {
+        if ($attrEnum === RelationKind::ONE_TO_ONE && $inverseO2O && $otherProp) {
             $args[] = new Node\Arg(
                 new Node\Scalar\String_($otherProp),
                 false,
@@ -275,14 +346,10 @@ class ClassManipulator
                 false,
                 false,
                 [],
-                new Node\Identifier(
-                    in_array($attr, $this->owningShouldBePlural, true)
-                        ? 'mappedBy'
-                        : 'inversedBy'
-                )
+                new Node\Identifier($isOwningSide ? 'inversedBy' : 'mappedBy')
             );
         }
-        if ($attr === RelationKind::MANY_TO_MANY->value && $joinTable) {
+        if ($attrEnum === RelationKind::MANY_TO_MANY && $isOwningSide && $joinTable) {
             $args[] = new Node\Arg(
                 new Node\Expr\New_(
                     new Node\Name('JoinTable'),
@@ -302,9 +369,13 @@ class ClassManipulator
     }
 
     /**
-     * Adds initialization for a collection property in the constructor, without overwriting or duplicating.
+     * Adds a collection initialization to the constructor for a property.
+     * This ensures that collection properties (arrays) are initialized to an empty array
+     * in the constructor if they are not already initialized.
+     *
+     * @param string $propName The name of the property to initialize.
      */
-    private function addCollectionInitToConstructor(string $propName)
+    private function addCollectionInitToConstructor(string $propName): void
     {
         $ctor = null;
         foreach ($this->classNode->stmts as $stmt) {
@@ -353,7 +424,12 @@ class ClassManipulator
         );
     }
 
-    private function removeProperty(string $name)
+    /**
+     * Removes a property from the class by its name
+     * This will filter out the property node from the class statements.
+     * @param string $name The name of the property to remove.
+     */
+    private function removeProperty(string $name): void
     {
         $stmts = &$this->classNode->stmts;
         $stmts = array_values(array_filter($stmts, function ($stmt) use ($name) {
@@ -361,7 +437,13 @@ class ClassManipulator
         }));
     }
 
-    private function insertProperty(Property $prop)
+    /**
+     * Inserts a property node into the class at the appropriate position.
+     * This handles blank lines before/after the property to ensure proper formatting.
+     *
+     * @param Property $prop The property node to insert.
+     */
+    private function insertProperty(Property $prop): void
     {
         $stmts = &$this->classNode->stmts;
         $insertIndex = $this->findPropertyInsertionPoint($stmts);
@@ -397,24 +479,42 @@ class ClassManipulator
      */
     private function newLineNode(): Node
     {
-        return new \PhpParser\Node\Stmt\Nop();
+        return new Nop();
     }
 
     /**
-     * Checks if a node is a blank line (Nop).
+     * Checks if a node is a blank line (Nop node).
+     * This is used to determine if we need to insert or remove blank lines.
+     *
+     * @param Node $node The node to check.
+     * @return bool True if the node is a blank line, false otherwise.
      */
-    private function isBlankLine($node): bool
+    private function isBlankLine(Node $node): bool
     {
-        return $node instanceof \PhpParser\Node\Stmt\Nop;
+        return $node instanceof Nop;
     }
 
-    private function insertMethod(ClassMethod $method)
+    /**
+     * Inserts a method node into the class at the appropriate position.
+     * This handles blank lines before/after the method to ensure proper formatting.
+     *
+     * @param ClassMethod $method The method node to insert.
+     */
+    private function insertMethod(ClassMethod $method): void
     {
         $stmts = &$this->classNode->stmts;
         $insertIndex = $this->findMethodInsertionPoint($stmts);
         array_splice($stmts, $insertIndex, 0, [$method]);
     }
 
+    /**
+     * Finds the insertion point for a new property in the class statements.
+     * This will return the index where the property should be inserted,
+     * which is after the last property or before the first method.
+     *
+     * @param array $stmts The class statements to search.
+     * @return int The index where the new property should be inserted.
+     */
     private function findPropertyInsertionPoint(array $stmts): int
     {
         $lastPropertyIndex = -1;
@@ -428,6 +528,14 @@ class ClassManipulator
         return $lastPropertyIndex + 1;
     }
 
+    /**
+     * Finds the insertion point for a new method in the class statements.
+     * This will return the index where the method should be inserted,
+     * which is after the constructor if it exists, otherwise after properties.
+     *
+     * @param array $stmts The class statements to search.
+     * @return int The index where the new method should be inserted.
+     */
     private function findMethodInsertionPoint(array $stmts): int
     {
         // Insert after constructor if it exists, otherwise after properties
@@ -441,7 +549,12 @@ class ClassManipulator
         return $this->findPropertyInsertionPoint($stmts);
     }
 
-    public function save()
+    /**
+     * Saves the modified class back to the original file.
+     * This will pretty-print the AST and ensure it starts with <?php.
+     * It also formats the code according to the defined rules.
+     */
+    public function save(): void
     {
         $code = $this->prettyPrinter->prettyPrint($this->ast);
         $code = $this->formatCode($code);
@@ -454,6 +567,14 @@ class ClassManipulator
         file_put_contents($this->file, $code);
     }
 
+    /**
+     * Formats the code according to the defined rules.
+     * This includes fixing spacing in declare statements, ensuring blank lines,
+     * and removing multiple consecutive blank lines.
+     *
+     * @param string $code The code to format.
+     * @return string The formatted code.
+     */
     private function formatCode(string $code): string
     {
         // Fix spacing in declare statement - remove space after 'declare'
@@ -502,5 +623,30 @@ class ClassManipulator
         $code = preg_replace('/\n{3,}/', "\n\n", $code);
 
         return $code;
+    }
+
+    /**
+     * Converts a RelationKind or string to a RelationKind enum.
+     * This handles both enum instances and string representations of relation kinds.
+     *
+     * @param RelationKind|string $kind The relation kind to convert.
+     * @return RelationKind The corresponding RelationKind enum.
+     */
+    public static function toEnum(RelationKind|string $kind): RelationKind
+    {
+        if ($kind instanceof RelationKind) {
+            return $kind;
+        }
+        if (isset(self::ATTR_TO_ENUM[$kind])) {
+            return self::ATTR_TO_ENUM[$kind];
+        }
+        $normalized = strtolower(preg_replace('/[^a-z]/i', '', $kind));
+        return match ($normalized) {
+            'onetoone'   => RelationKind::ONE_TO_ONE,
+            'onetomany'  => RelationKind::ONE_TO_MANY,
+            'manytoone'  => RelationKind::MANY_TO_ONE,
+            'manytomany' => RelationKind::MANY_TO_MANY,
+            default      => RelationKind::from($kind),
+        };
     }
 }

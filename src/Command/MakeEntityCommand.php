@@ -32,15 +32,15 @@ final class MakeEntityCommand extends Command
 
     private object $relTypes;
 
-    /** 
-     * Maps each owning-side relation kind (e.g., ONE_TO_MANY) 
-     * to its corresponding inverse relation kind (e.g., MANY_TO_ONE). 
+    /**
+     * Maps each owning-side relation kind (e.g., ONE_TO_MANY)
+     * to its corresponding inverse relation kind (e.g., MANY_TO_ONE).
      */
     private object $inverseMap;
 
-    /** 
-     * Maps DB field types (e.g., "string", "json") 
-     * to their corresponding PHP native types (e.g., "string", "array"). 
+    /**
+     * Maps DB field types (e.g., "string", "json")
+     * to their corresponding PHP native types (e.g., "string", "array").
      */
     private object $phpTypeMap;
 
@@ -193,16 +193,18 @@ final class MakeEntityCommand extends Command
         }
         foreach ($this->relNames as $p => $m) {
             $short = substr($m['target'], strrpos($m['target'], '\\') + 1);
-            $arr_check = [RelationKind::ONE_TO_MANY->value, RelationKind::MANY_TO_MANY->value];
-            $isMany = in_array(lcfirst($m['attr']), $arr_check, true);
+            $kindEnum = $m['attr'] instanceof RelationKind ? $m['attr'] : ClassManipulator::toEnum($m['attr']);
+            $isMany   = in_array($kindEnum, [RelationKind::ONE_TO_MANY, RelationKind::MANY_TO_MANY], true);
+
+            $owning = $m['owning'] ?? ($m['other_prop'] !== null);
             $manipulator->addRelation(
                 $p,
-                $m['attr'],
+                $kindEnum,
                 $short,
                 $isMany,
                 $m['other_prop'] ?? null,
                 $m['joinTable'] ?? null,
-                $m['attr'] === RelationKind::ONE_TO_ONE->value && !empty($m['other_prop'])
+                $kindEnum === RelationKind::ONE_TO_ONE && !empty($m['other_prop']) && !$owning
             );
         }
         $manipulator->save();
@@ -257,8 +259,8 @@ final class MakeEntityCommand extends Command
         $this->setCompletionContext(CompletionContext::RELATION, array_keys($opts));
         $kind = $this->chooseOption('relation', array_keys($opts));
         $relCase = $this->relTypes->tryFrom($kind);
-        $attr = $relCase->value;
-        $attrUC = ucfirst($relCase->value);
+        $attr   = $relCase->value;
+        $attrUC = $kind;
 
         /* target entity */
         $entities = array_map(
@@ -337,10 +339,11 @@ final class MakeEntityCommand extends Command
         }
 
         $this->relNames[$prop] = [
-            'attr'       => $attrUC,
+            'attr'       => $relCase,
             'target'     => $fqcn,
             'other_prop' => $inverseProp,
-            'joinTable'  => $joinTable
+            'joinTable'  => $joinTable,
+            'owning'     => true,
         ];
 
         $this->info("  ➕  $selfClass::$prop ($attrUC) --> $fqcn");
