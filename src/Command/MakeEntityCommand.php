@@ -394,7 +394,6 @@ final class MakeEntityCommand extends Command
                 $targetClass = substr($d['target'], strrpos($d['target'], '\\') + 1);
                 $arr_check = [RelationKind::ONE_TO_MANY->value, RelationKind::MANY_TO_MANY->value];
                 $isMany = in_array(lcfirst($d['attr']), $arr_check, true);
-
                 if ($d['prop'] === 'id' && $isMany) {
                     $d['prop'] = lcfirst($this->inflector->pluralize($targetClass));
                 }
@@ -403,7 +402,7 @@ final class MakeEntityCommand extends Command
                     $d['prop'],
                     $d['attr'],
                     $targetClass,
-                    $isMany,
+                    false,
                     $d['other_prop'] ?? null,
                     $d['joinTable'] ?? null,
                     $d['inverse_o2o'] ?? false

@@ -169,7 +169,7 @@ class ClassManipulator
             $ctor[]  = "        \$this->{$name} = [];";
 
             // Insert docblock as comment
-            $docComment = "/** @var {$targetShort}[] */";
+            $docComment = " /** @var {$targetShort}[] */";
             $propNode = $this->builderFactory->property($name)
                 ->makePublic()
                 ->setType('array')
@@ -328,8 +328,7 @@ class ClassManipulator
         ?JoinTable          $joinTable,
         bool                $inverseO2O,
         bool                $isOwningSide = false
-    ): array
-    {
+    ): array {
         $attrEnum = self::toEnum($attr);
         $args = [];
         if ($attrEnum === RelationKind::ONE_TO_ONE && $inverseO2O && $otherProp) {
@@ -496,14 +495,20 @@ class ClassManipulator
 
     /**
      * Inserts a method node into the class at the appropriate position.
-     * This handles blank lines before/after the method to ensure proper formatting.
+     * This will always insert the method at the bottom of the class (after all other methods).
      *
      * @param ClassMethod $method The method node to insert.
      */
     private function insertMethod(ClassMethod $method): void
     {
         $stmts = &$this->classNode->stmts;
-        $insertIndex = $this->findMethodInsertionPoint($stmts);
+        $lastMethodIndex = -1;
+        foreach ($stmts as $i => $stmt) {
+            if ($stmt instanceof ClassMethod) {
+                $lastMethodIndex = $i;
+            }
+        }
+        $insertIndex = $lastMethodIndex >= 0 ? $lastMethodIndex + 1 : count($stmts);
         array_splice($stmts, $insertIndex, 0, [$method]);
     }
 
