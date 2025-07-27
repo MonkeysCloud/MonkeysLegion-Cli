@@ -164,6 +164,10 @@ class ClassManipulator
         $attr   = $kind->value;
         $isMany = in_array($kind, self::COLLECTION_KINDS, true);
 
+        if ($kind === RelationKind::ONE_TO_MANY) {
+            $isOwningSide = false;
+        }
+
         if (!preg_match('/^[A-Z][A-Za-z0-9_]*$/', $targetShort)) {
             return;
         }
@@ -363,23 +367,18 @@ class ClassManipulator
     ): array {
         $attrEnum = self::toEnum($attr);
         $args = [];
+
         if ($attrEnum === RelationKind::ONE_TO_ONE && $inverseO2O && $otherProp) {
-            $args[] = new Node\Arg(
-                new Node\Scalar\String_($otherProp),
-                false,
-                false,
-                [],
-                new Node\Identifier('mappedBy')
-            );
+            $args[] = new Node\Arg(new Node\Scalar\String_($otherProp), false, false, [], new Node\Identifier('mappedBy'));
         } elseif ($otherProp) {
-            $args[] = new Node\Arg(
-                new Node\Scalar\String_($otherProp),
-                false,
-                false,
-                [],
-                new Node\Identifier($isOwningSide ? 'inversedBy' : 'mappedBy')
-            );
+            // >>> SPECIAL-CASE: OneToMany always mappedBy
+            $param = ($attrEnum === RelationKind::ONE_TO_MANY)
+                ? 'mappedBy'
+                : ($isOwningSide ? 'inversedBy' : 'mappedBy');
+
+            $args[] = new Node\Arg(new Node\Scalar\String_($otherProp), false, false, [], new Node\Identifier($param));
         }
+
         if ($attrEnum === RelationKind::MANY_TO_MANY && $isOwningSide && $joinTable) {
             $args[] = new Node\Arg(
                 new Node\Expr\New_(

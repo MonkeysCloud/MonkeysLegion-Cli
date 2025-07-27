@@ -335,6 +335,15 @@ final class MakeEntityCommand extends Command
                 $owning = true;
             }
             $nullable = false;
+            // Default owning by relation kind (will be overridden for M2M above)
+            if (!isset($owning)) {
+                $owning = match ($relCase) {
+                    RelationKind::ONE_TO_MANY  => false, // inverse
+                    RelationKind::MANY_TO_ONE  => true,  // owning
+                    RelationKind::ONE_TO_ONE   => true,  // pick current side as owning
+                    RelationKind::MANY_TO_MANY => true,  // handled above
+                };
+            }
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
         if ($prop === '' || isset($existing[$prop]) || isset($this->relNames[$prop])) return;
@@ -357,6 +366,12 @@ final class MakeEntityCommand extends Command
             $inverseProp = $this->ask("  Inverse property in $short [{$defName}]") ?: $defName;
             $isInverseOneToOne = $relCase === RelationKind::ONE_TO_ONE;
             $fqSelf = "App\\Entity\\$selfClass";
+            $invOwning = match ($invRelationKind) {
+                RelationKind::ONE_TO_MANY  => false,
+                RelationKind::MANY_TO_ONE  => true,
+                RelationKind::ONE_TO_ONE   => false, // inverse O2O uses mappedBy → not owning
+                RelationKind::MANY_TO_MANY => false, // let current side be owning
+            };
             $this->queueInverse(
                 $fqcn,
                 $inverseProp,
@@ -364,6 +379,7 @@ final class MakeEntityCommand extends Command
                 $fqSelf,
                 $prop,
                 $isInverseOneToOne,
+                $invOwning
             );
             $owning = true;
         }
@@ -374,7 +390,7 @@ final class MakeEntityCommand extends Command
             'other_prop' => $inverseProp,
             'joinTable'  => $joinTable,
             'nullable'   => $nullable,
-            'owning'     => true,
+            'owning'     => $owning,
         ];
 
         $this->info("  ➕  $selfClass::$prop ($kind) --> $fqcn");
@@ -398,7 +414,8 @@ final class MakeEntityCommand extends Command
         string  $attr,
         string  $target,
         ?string $otherProp = null,
-        bool    $isInverseOneToOne = false
+        bool    $isInverseOneToOne = false,
+        bool    $owning = false
     ): void {
         $this->inverseQueue[$fqcn][] = [
             'prop'       => $prop,
@@ -406,6 +423,7 @@ final class MakeEntityCommand extends Command
             'target'     => $target,
             'other_prop' => $otherProp,
             'inverse_o2o' => $isInverseOneToOne,
+            'owning'      => $owning,
         ];
     }
 
@@ -430,12 +448,18 @@ final class MakeEntityCommand extends Command
                 if ($d['prop'] === 'id' && $isMany) {
                     $d['prop'] = lcfirst($this->inflector->pluralize($targetClass));
                 }
-
+                // Decide owning for the inverse when not explicitly stored
+                $owning = $d['owning'] ?? match ($kindEnum) {
+                    RelationKind::ONE_TO_MANY  => false,
+                    RelationKind::MANY_TO_ONE  => true,
+                    RelationKind::ONE_TO_ONE   => !($d['inverse_o2o'] ?? false),
+                    RelationKind::MANY_TO_MANY => false,
+                };
                 $manipulator->addRelation(
                     $d['prop'],
                     $kindEnum,
                     $targetClass,
-                    false,
+                    $owning,
                     $d['other_prop'] ?? null,
                     $d['joinTable'] ?? null,
                     $d['inverse_o2o'] ?? false,
