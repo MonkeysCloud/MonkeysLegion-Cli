@@ -272,6 +272,7 @@ final class MakeEntityCommand extends Command
         $this->setCompletionContext(CompletionContext::RELATION, array_keys($opts));
         $kind = $this->chooseOption('relation', array_keys($opts));
         $relCase = $this->relTypes->tryFrom($kind);
+        $this->printRelationHelp($relCase);
         $attr = $relCase->value;
         $attrUC = $kind;
         $isCollection = in_array(
@@ -349,6 +350,8 @@ final class MakeEntityCommand extends Command
         if ($prop === '' || isset($existing[$prop]) || isset($this->relNames[$prop])) return;
 
         /* inverse side? */
+        $this->line("ℹ️  You can generate the inverse side now. The tool will set");
+        $this->line("   mappedBy/inversedBy and ownership based on the relation kind.");
         $inverseProp = null;
         if (strtolower($this->ask('  Generate inverse side in target? [y/N]')) === 'y') {
             $invRelationKind = $this->inverseMap->getInverse($relCase);
@@ -770,4 +773,48 @@ final class MakeEntityCommand extends Command
             preg_replace('/([a-z])([A-Z])/', '\$1_\$2', $class)
         );
     }
+
+    /**
+     * Print help for the given relation kind.
+     *
+     * This method provides detailed information about how to set up the specified relation kind,
+     * including which side is owning, how to use mappedBy/inversedBy, and what the expected result is.
+     *
+     * @param RelationKind $kind The relation kind to provide help for.
+     */
+    private function printRelationHelp(RelationKind $kind): void
+    {
+        switch ($kind) {
+            case RelationKind::ONE_TO_MANY:
+                $this->line("\n📘 OneToMany");
+                $this->line("• Collection side (OneToMany) is the *inverse* side → uses mappedBy.");
+                $this->line("• The *owning* side is ManyToOne on the target entity → uses inversedBy and carries the FK `<prop>_id`.");
+                $this->line("• Result: current entity gets `#[OneToMany(targetEntity: X::class, mappedBy: 'y')] array`.");
+                $this->line("         target gets `#[ManyToOne(targetEntity: Current::class, inversedBy: 'plural')] ?Current`.\n");
+                break;
+
+            case RelationKind::MANY_TO_ONE:
+                $this->line("\n📘 ManyToOne");
+                $this->line("• This side is the *owning* side → uses inversedBy and holds the FK `<prop>_id`.");
+                $this->line("• The inverse side on the other entity is OneToMany → mappedBy and an array collection.");
+                $this->line("• Result: current entity gets `#[ManyToOne(targetEntity: X::class, inversedBy: 'plural')] ?X`.");
+                $this->line("         target gets `#[OneToMany(targetEntity: Current::class, mappedBy: 'singular')] array`.\n");
+                break;
+
+            case RelationKind::ONE_TO_ONE:
+                $this->line("\n📘 OneToOne");
+                $this->line("• Only one side owns the relation. The owning side stores the FK `<prop>_id`.");
+                $this->line("• Owning side → `inversedBy`. Inverse side → `mappedBy`.");
+                $this->line("• If you generate the inverse, the tool will set it as `mappedBy` automatically.\n");
+                break;
+
+            case RelationKind::MANY_TO_MANY:
+                $this->line("\n📘 ManyToMany");
+                $this->line("• One side must be chosen as *owning* to define the join table (name + columns).");
+                $this->line("• Owning side → may specify `joinTable`. Inverse side → just `mappedBy`/`inversedBy`.");
+                $this->line("• Both sides are arrays (collections). No FK column on either main table; rows live in the join table.\n");
+                break;
+        }
+    }
+
 }
