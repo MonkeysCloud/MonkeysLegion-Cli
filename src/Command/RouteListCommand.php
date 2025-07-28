@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -13,7 +14,7 @@ use MonkeysLegion\Router\RouteCollection;
 #[CommandAttr('route:list', 'Display all registered routes.')]
 final class RouteListCommand extends Command
 {
-    public function __construct(private RouteCollection $routes)
+    public function __construct(private RouteCollection $routes) // TODO: RouteCollection should be an iterable array for static type safety
     {
         parent::__construct();
     }
@@ -39,7 +40,10 @@ final class RouteListCommand extends Command
         // Header
         $this->line(sprintf(
             "%-20s  %-6s  %-30s  %s",
-            'Name', 'Verb', 'Path', 'Handler'
+            'Name',
+            'Verb',
+            'Path',
+            'Handler'
         ));
         $this->line(str_repeat('-', 80));
 

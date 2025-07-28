@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -20,7 +21,12 @@ final class SeedCommand extends Command
 
     public function handle(): int
     {
-        $target = $_SERVER['argv'][2] ?? null;
+        $argv = (array)($_SERVER['argv'] ?? []);
+        $target = $argv[2] ?? null;
+        if(!is_string($target) || $target === '') {
+            $this->line('No seeder specified.');
+            return self::FAILURE;
+        }
         $path   = base_path('database/seeders');
         $files  = glob("{$path}/*Seeder.php");
 
@@ -43,7 +49,7 @@ final class SeedCommand extends Command
                 continue;
             }
             $this->line("➤ Running {$classFile}...");
-            (new $fqcn)->run($this->db);
+            (new $fqcn)->run($this->db); //TODO: define an abstract Seeder class for static type safety
         }
 
         $this->info('✅  Seeders complete.');

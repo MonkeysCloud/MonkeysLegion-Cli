@@ -2,6 +2,8 @@
 
 namespace MonkeysLegion\Cli\Config;
 
+use InvalidArgumentException;
+
 /**
  * Enum for field types.
  */
@@ -68,6 +70,6 @@ class FieldTypeConfig
             }
         }
 
-        throw new \InvalidArgumentException("Unknown field type: $value");
+        throw new InvalidArgumentException("Unknown field type: $value");
     }
 }

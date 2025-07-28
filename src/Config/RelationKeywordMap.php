@@ -20,6 +20,11 @@ class RelationKeywordMap
         RelationKind::MANY_TO_MANY->value => 'ManyToMany',
     ];
 
+    /**
+     * Returns a mapping of RelationKind cases to their attribute names.
+     *
+     * @return array<string, string>
+     */
     public function all(): array
     {
         return $this->map;

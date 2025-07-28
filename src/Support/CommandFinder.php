@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Support;
@@ -28,6 +29,7 @@ final class CommandFinder
                 if (!is_dir($cmdPath)) {
                     continue;
                 }
+                /** @var \SplFileInfo $file */
                 foreach (
                     new \RecursiveIteratorIterator(
                         new \RecursiveDirectoryIterator($cmdPath)

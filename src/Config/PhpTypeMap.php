@@ -4,6 +4,9 @@ namespace MonkeysLegion\Cli\Config;
 
 class PhpTypeMap
 {
+    /**
+     * @var array<FieldType, string>|null
+     */
     private ?array $map = null;
 
     /**

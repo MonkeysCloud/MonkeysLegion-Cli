@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -20,12 +21,18 @@ final class CreateDatabaseCommand extends Command
     public function handle(): int
     {
         /* ── 1. load DSN / creds from config (.env already parsed there) ── */
+        /** 
+         * @var array{
+         *   default: string,
+         *   connections: array<string, array<string, mixed>>
+         * } $cfg
+         */
         $cfg  = require base_path('config/database.php');
         $conn = $cfg['connections'][$cfg['default']] ?? [];
 
-        $dsn      = $conn['dsn']      ?? '';
-        $appUser  = $conn['username'] ?? 'root';
-        $appPass  = $conn['password'] ?? '';
+        $dsn = isset($conn['dsn']) && is_string($conn['dsn']) ? $conn['dsn'] : '';
+        $appUser = isset($conn['username']) && is_string($conn['username']) ? $conn['username'] : 'root';
+        $appPass = isset($conn['password']) && is_string($conn['password']) ? $conn['password'] : '';
         if (!str_starts_with($dsn, 'mysql:')) {
             $this->info('db:create skipped – driver not MySQL.');
             return self::SUCCESS;
@@ -86,8 +93,8 @@ final class CreateDatabaseCommand extends Command
             // no CREATE privilege
             if (in_array($e->errorInfo[1] ?? null, [1044, 1045], true)) {
                 $this->line(
-                    "⚠️  App user “{$appUser}” lacks CREATE DATABASE; ".
-                    "ensure schema “{$db}” exists or grant the privilege."
+                    "⚠️  App user “{$appUser}” lacks CREATE DATABASE; " .
+                        "ensure schema “{$db}” exists or grant the privilege."
                 );
                 // treat this as *non-fatal* so other commands can proceed
                 return self::SUCCESS;

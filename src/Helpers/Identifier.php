@@ -4,6 +4,11 @@ namespace MonkeysLegion\Cli\Helpers;
 
 class Identifier
 {
+    /**
+     * List of reserved keywords in PHP.
+     *
+     * @var array<string>
+     */
     protected static array $reserved = [
         '__halt_compiler',
         'abstract',

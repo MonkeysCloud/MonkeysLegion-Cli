@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -6,7 +7,7 @@ namespace MonkeysLegion\Cli\Command;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\DI\ContainerBuilder;
-use Psr\Container\ContainerInterface;
+use MonkeysLegion\DI\Container;
 
 #[CommandAttr(
     'tinker',
@@ -18,8 +19,10 @@ final class TinkerCommand extends Command
     {
         // 1) Bootstrap your DI container
         $builder = new ContainerBuilder();
-        $builder->addDefinitions(require base_path('config/app.php'));
-        /** @var ContainerInterface $container */
+        /** @var array<string, mixed> $app */
+        $app = require base_path('config/app.php');
+        $builder->addDefinitions($app);
+        /** @var Container $container */
         $container = $builder->build();
 
         // Mark $container as “used” & inject it into the local scope

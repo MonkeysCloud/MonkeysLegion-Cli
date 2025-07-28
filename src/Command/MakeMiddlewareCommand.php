@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -13,7 +14,8 @@ final class MakeMiddlewareCommand extends Command
 
     public function handle(): int
     {
-        $input = $_SERVER['argv'][2] ?? $this->ask('Enter middleware name (e.g. Auth)');
+        $argv = is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [];
+        $input = isset($argv[2]) && is_string($argv[2]) ? $argv[2] : $this->ask('Enter middleware name (e.g. Auth)');
         $name  = preg_replace('/Middleware$/', '', $input) . 'Middleware';
 
         if (!preg_match('/^[A-Z][A-Za-z0-9]+Middleware$/', $name)) {

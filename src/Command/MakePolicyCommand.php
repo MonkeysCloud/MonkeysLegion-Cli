@@ -13,7 +13,8 @@ final class MakePolicyCommand extends Command
 
     public function handle(): int
     {
-        $input = $_SERVER['argv'][2] ?? $this->ask('Enter policy name (e.g. User)');
+        $argv = is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [];
+        $input = isset($argv[2]) && is_string($argv[2]) ? $argv[2] : $this->ask('Enter policy name (e.g. User)');
         $name  = preg_replace('/Policy$/', '', $input) . 'Policy';
 
         if (!preg_match('/^[A-Z][A-Za-z0-9]+Policy$/', $name)) {

@@ -12,6 +12,11 @@ class RelationInverseMap
         RelationKind::MANY_TO_MANY->value => RelationKind::MANY_TO_MANY,
     ];
 
+    /**
+     * Returns a mapping of RelationKind cases to their inverse.
+     *
+     * @return array<RelationKind, RelationKind>
+     */
     public function all(): array
     {
         return $this->map;

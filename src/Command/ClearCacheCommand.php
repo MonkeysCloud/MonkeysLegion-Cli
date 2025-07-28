@@ -39,14 +39,16 @@ final class ClearCacheCommand extends Command
         );
 
         $deleted = 0;
+        /** @var \SplFileInfo $file */
         foreach ($files as $file) {
-            /* @var SplFileInfo $file */
             if ($file->isFile()) {
-                if (! @unlink($file->getRealPath())) {
-                    $this->error("Failed to delete cache file: {$file}");
+                $realPath = $file->getRealPath();
+                if (is_string($realPath) && @unlink($realPath)) {
+                    $deleted++;
+                } else {
+                    $this->error("Failed to delete cache file: {$realPath}");
                     return self::FAILURE;
                 }
-                $deleted++;
             }
         }
 

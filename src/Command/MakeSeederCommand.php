@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -14,8 +15,8 @@ final class MakeSeederCommand extends Command
 {
     public function handle(): int
     {
-        $name = $_SERVER['argv'][2]
-            ?? $this->ask('Enter seeder name (e.g. UsersTable)');
+        $argv = is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [];
+        $name = isset($argv[2]) && is_string($argv[2]) ? $argv[2] : $this->ask('Enter seeder name (e.g. UsersTable)');
 
         if (!preg_match('/^[A-Z][A-Za-z0-9]+$/', $name)) {
             return $this->fail('Invalid seeder name – must start with uppercase.');
@@ -60,8 +61,8 @@ PHP;
     private function ask(string $q): string
     {
         return function_exists('readline')
-            ? trim(readline("$q "))
-            : trim(fgets(STDIN));
+            ? trim(readline("$q ") ?: '')
+            : trim(fgets(STDIN) ?: '');
     }
 
     private function fail(string $msg): int

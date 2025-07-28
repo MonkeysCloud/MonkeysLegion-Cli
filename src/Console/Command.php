@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Console;
 
+use PDO;
+use PDOStatement;
+
 abstract class Command
 {
     public const int SUCCESS = 0;
@@ -23,7 +26,7 @@ abstract class Command
     {
         $this->write($msg);
     }
-    
+
     protected function error(string $msg): void
     {
         $this->write($msg, 31);
@@ -35,6 +38,17 @@ abstract class Command
     {
         $colorized = $color ? "\033[{$color}m{$msg}\033[0m" : $msg;
         fwrite($color === 31 ? STDERR : STDOUT, $colorized . PHP_EOL);
+    }
+
+    protected function safeQuery(PDO $pdo, string $sql): PDOStatement
+    {
+        $stmt = $pdo->query($sql);
+        if (!$stmt) {
+            $error = is_string($pdo->errorInfo()[2] ?? null) ? $pdo->errorInfo()[2] : 'Unknown error';
+            throw new \RuntimeException('Query failed: ' . $error);
+        }
+
+        return $stmt;
     }
 
     /* ---------- runtime entry point -------------------------------------- */

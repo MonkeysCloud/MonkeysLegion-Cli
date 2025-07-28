@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli;
@@ -36,11 +37,16 @@ final class CliKernel
         }
 
         // 2. Fallback: auto-discover vendor commands
-        foreach (glob(__DIR__ . '/Command/*.php') as $file) {
+        $files = glob(__DIR__ . '/Command/*.php') ?: [];
+        foreach ($files as $file) {
             require_once $file;
         }
         foreach (get_declared_classes() as $class) {
-            if (str_starts_with($class, 'MonkeysLegion\\Cli\\Command\\')) {
+            if (
+                str_starts_with($class, 'MonkeysLegion\\Cli\\Command\\') &&
+                is_subclass_of($class, Command::class)
+            ) {
+                /** @var class-string<Command> $class */
                 $this->register($class);
             }
         }

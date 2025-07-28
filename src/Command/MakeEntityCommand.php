@@ -11,6 +11,9 @@ use MonkeysLegion\Entity\Attributes\JoinTable;
 use Doctrine\Inflector\Inflector;
 use Doctrine\Inflector\InflectorFactory;
 use MonkeysLegion\Cli\Config\FieldType;
+use MonkeysLegion\Cli\Config\PhpTypeMap;
+use MonkeysLegion\Cli\Config\RelationInverseMap;
+use MonkeysLegion\Cli\Config\RelationKeywordMap;
 use MonkeysLegion\Cli\Config\RelationKind;
 use MonkeysLegion\Cli\Helpers\Identifier;
 use MonkeysLegion\Cli\Service\ClassManipulator;
@@ -27,27 +30,27 @@ enum CompletionContext: string
 final class MakeEntityCommand extends Command
 {
 
-    /** @var string[] DB scalar types offered in the wizard */
+    /** @var array<string> DB scalar types offered in the wizard */
     private array $fieldTypes;
 
-    private object $relTypes;
+    private RelationKeywordMap $relTypes;
 
     /**
      * Maps each owning-side relation kind (e.g., ONE_TO_MANY)
      * to its corresponding inverse relation kind (e.g., MANY_TO_ONE).
      */
-    private object $inverseMap;
+    private RelationInverseMap $inverseMap;
 
     /**
      * Maps DB field types (e.g., "string", "json")
      * to their corresponding PHP native types (e.g., "string", "array").
      */
-    private object $phpTypeMap;
+    private PhpTypeMap $phpTypeMap;
 
     /** @var array<string, string> Field names in the current entity */
     protected array $fieldNames = [];
 
-    /** @var array<string, string> Relationship names in the current entity */
+    /** @var array<string, array{target: string, attr: RelationKind|string, other_prop: string|null, owning: bool|null, joinTable: JoinTable|null}> */
     protected array $relNames = [];
 
     public function __construct(
@@ -55,8 +58,7 @@ final class MakeEntityCommand extends Command
     ) {
         parent::__construct();
 
-        $this->fieldTypes = $this->config->fieldTypes->all();
-        $this->fieldTypes = array_map(fn(FieldType $case) => $case->value, $this->fieldTypes);
+        $this->fieldTypes = array_map(fn(FieldType $case) => $case->value, $this->config->fieldTypes->all());
 
         $this->relTypes = $this->config->relationKeywordMap;
 
@@ -67,8 +69,23 @@ final class MakeEntityCommand extends Command
 
     /* helpers */
     private string $completionContext = CompletionContext::DEFAULT->value;
+
+    /** @var array<string, array<string>> */
     private array $contextAwareCompletions = [];
+
+    /**
+     * @var array<string, array<int, array{
+     *   prop: string,
+     *   attr: string|RelationKind,
+     *   target: string,
+     *   other_prop: string|null,
+     *   inverse_o2o: bool|null,
+     *   joinTable?: JoinTable|null
+     * }>>
+     */
     private array $inverseQueue = [];
+
+    /** @var string[] */
     private array $inverseShouldBePlural = [
         RelationKind::ONE_TO_MANY->value,
         RelationKind::MANY_TO_MANY->value,
@@ -98,7 +115,7 @@ final class MakeEntityCommand extends Command
         @mkdir($dir, 0755, true);
 
         /* 0️⃣  prepare entities name */
-        $entityFiles = glob($dir . '/*.php');
+        $entityFiles = glob($dir . '/*.php') ?: [];
         $entities = [];
         foreach ($entityFiles as $filePath) {
             // Get filename without extension, e.g. User.php -> User
@@ -108,7 +125,12 @@ final class MakeEntityCommand extends Command
         $this->setCompletionContext(CompletionContext::ENTITY, array_keys($entities));
 
         /* 1️⃣  entity name */
-        $name = $_SERVER['argv'][2] ?? $this->ask('Enter entity name (e.g. User)');
+        $argv = $_SERVER['argv'] ?? [];
+
+        $name = (is_array($argv) && isset($argv[2]) && is_string($argv[2]))
+            ? $argv[2]
+            : $this->ask('Enter entity name (e.g. User)');
+
         if (!preg_match('/^[A-Z][A-Za-z0-9]+$/', $name)) {
             return $this->fail('Invalid class name – must start with uppercase.');
         }
@@ -129,7 +151,7 @@ final class MakeEntityCommand extends Command
         $manipulator = new ClassManipulator($file);
 
         /* 3️⃣  scan existing props */
-        $src = file_get_contents($file);
+        $src = file_get_contents($file) ?: '';
         $ast = (new \PhpParser\ParserFactory())->createForNewestSupportedVersion()->parse($src);
         $existingFields = [];
         $existingRels = [];
@@ -216,9 +238,7 @@ final class MakeEntityCommand extends Command
     }
 
     /**
-     * Prompt the user for a field name and type.
-     *
-     * @param array $existing Existing properties to check against.
+     * @param array<string, array<string, string>> $existing Existing properties to check against.
      */
     private function wizardField(array $existing): void
     {
@@ -247,8 +267,7 @@ final class MakeEntityCommand extends Command
     /**
      * Prompt the user for a relationship type and target entity.
      *
-     * @param array $existing Existing properties to check against.
-     * @param array $out      Output array to store the new property.
+     * @param array<string, array<string, string>> $existing.
      * @param string $selfClass The name of the current class.
      */
     private function wizardRelation(
@@ -259,13 +278,18 @@ final class MakeEntityCommand extends Command
         $this->setCompletionContext(CompletionContext::RELATION, array_keys($opts));
         $kind = $this->chooseOption('relation', array_keys($opts));
         $relCase = $this->relTypes->tryFrom($kind);
+        if (!$relCase) {
+            $this->error("Unknown relation type '$kind'.");
+            return;
+        }
         $attr   = $relCase->value;
         $attrUC = $kind;
 
         /* target entity */
+        $files = glob(base_path('app/Entity') . '/*.php') ?: [];
         $entities = array_map(
             fn($f) => basename($f, '.php'),
-            glob(base_path('app/Entity') . '/*.php')
+            $files
         );
         $this->setCompletionContext(CompletionContext::ENTITY, $entities);
         $target = $this->ask('  Target entity');
@@ -289,42 +313,42 @@ final class MakeEntityCommand extends Command
         $joinTable = null;
         /* property name */
         if ($attr === RelationKind::MANY_TO_MANY->value) {
-            // default to owning-sided ManyToMany
-            $owning = true;
-            if ($owning) {
-                // default table name: alphabetical snake
-                [$a, $b] = [lcfirst($selfClass), lcfirst($short)];
-                // build array, then sort it by reference
-                $arr = [$this->snake($a), $this->snake($b)];
-                sort($arr);
-                $default = implode('_', $arr);
+            // default table name: alphabetical snake
+            [$a, $b] = [lcfirst($selfClass), lcfirst($short)];
+            // build array, then sort it by reference
+            $arr = [$this->snake($a), $this->snake($b)];
+            sort($arr);
+            $default = implode('_', $arr);
 
-                $tbl  = $this->ask("  Join table name [$default]") ?: $default;
-                $colA = $this->ask("  Column for {$selfClass} [{$arr[0]}_id]")  ?: "{$arr[0]}_id";
-                $colB = $this->ask("  Column for {$short} [{$arr[1]}_id]")      ?: "{$arr[1]}_id";
-                $joinTable = new JoinTable(name: $tbl, joinColumn: $colA, inverseColumn: $colB);
-            }
+            $tbl  = $this->ask("  Join table name [$default]") ?: $default;
+            $colA = $this->ask("  Column for {$selfClass} [{$arr[0]}_id]")  ?: "{$arr[0]}_id";
+            $colB = $this->ask("  Column for {$short} [{$arr[1]}_id]")      ?: "{$arr[1]}_id";
+            $joinTable = new JoinTable(name: $tbl, joinColumn: $colA, inverseColumn: $colB);
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
         if ($prop === '' || isset($existing[$prop]) || isset($this->relNames[$prop])) return;
 
         /* inverse side? */
         $inverseProp = null;
+        $invAttr = null;
         if (strtolower($this->ask('  Generate inverse side in target? [y/N]')) === 'y') {
             $invRelationKind = $this->inverseMap->getInverse($relCase);
-            $invAttr = $invRelationKind->value;
-            $base = lcfirst($selfClass);
+            if ($invRelationKind === null) {
+                $this->error('Cannot determine inverse relationship.');
+                return;
+            }
+            $invAttr = lcfirst($invRelationKind->value);
 
             if (in_array($invAttr, $this->inverseShouldBePlural, true)) {
                 // proper plural, e.g. “companies”
-                $defName = $this->inflector->pluralize($base);
+                $defName = $this->inflector->pluralize($invAttr);
             } else {
                 // singular
-                $defName = $base;
+                $defName = $invAttr;
             }
 
             $attr = ucfirst($relCase->value);
-            $isInverseOneToOne = $attr === ucfirst(RelationKind::ONE_TO_ONE->value) && !empty($inverseProp);
+            $isInverseOneToOne = $attr === ucfirst(RelationKind::ONE_TO_ONE->value);
             $inverseProp = $this->ask("  Inverse property in $short [{$defName}]") ?: $defName;
             $invAttr = ucfirst($invRelationKind->value);
             $selfClass = "App\\Entity\\$selfClass";
@@ -347,7 +371,7 @@ final class MakeEntityCommand extends Command
         ];
 
         $this->info("  ➕  $selfClass::$prop ($attrUC) --> $fqcn");
-        $this->info("  ➕  $fqcn::$inverseProp ($invAttr) <-- $selfClass");
+        if ($invAttr) $this->info("  ➕  $fqcn::$inverseProp ($invAttr) <-- $selfClass");
     }
 
     /**
@@ -393,7 +417,8 @@ final class MakeEntityCommand extends Command
             foreach ($defs as $d) {
                 $targetClass = substr($d['target'], strrpos($d['target'], '\\') + 1);
                 $arr_check = [RelationKind::ONE_TO_MANY->value, RelationKind::MANY_TO_MANY->value];
-                $isMany = in_array(lcfirst($d['attr']), $arr_check, true);
+                $attr = is_string($d['attr']) ? $d['attr'] : $d['attr']->value;
+                $isMany = in_array(lcfirst($attr), $arr_check, true);
                 if ($d['prop'] === 'id' && $isMany) {
                     $d['prop'] = lcfirst($this->inflector->pluralize($targetClass));
                 }
@@ -422,7 +447,9 @@ final class MakeEntityCommand extends Command
      */
     private function ask(string $q): string
     {
-        return function_exists('readline') ? trim(readline("$q ")) : trim(fgets(STDIN));
+        return function_exists('readline')
+            ? trim(readline("$q ") ?: '')
+            : trim(fgets(STDIN) ?: '');
     }
 
     /**
@@ -430,15 +457,19 @@ final class MakeEntityCommand extends Command
      *
      * @param string $in
      * @param int $i
-     * @return array
+     * @return array<string>
      */
     public function readlineComplete(string $in, int $i): array
     {
-        $opts = array_filter($this->contextAwareCompletions[$this->completionContext] ?? [], fn($o) => $this->fuzzyMatch($in, $o));
+        $opts = array_filter(
+            $this->contextAwareCompletions[$this->completionContext] ?? [],
+            fn($o) => $this->fuzzyMatch($in, $o)
+        );
+
         $count = count($opts);
 
         if ($count > 0) {
-            usort($opts, function ($a, $b) use ($in) {
+            usort($opts, function (string $a, string $b) use ($in) {
                 similar_text($in, $b, $percentB);
                 similar_text($in, $a, $percentA);
                 return $percentB <=> $percentA;
@@ -448,11 +479,16 @@ final class MakeEntityCommand extends Command
             echo "> " . $in;
         }
 
-        return $count >= 1 ? [$in, ...$opts] : [$in];
+        // Cast everything to string explicitly to satisfy return type
+        return $count >= 1 ? array_map('strval', [$in, ...$opts]) : [$in];
     }
 
     /**
      * Single completer that adapts based on current context
+     *
+     * @param string $input The user input to complete.
+     * @param int $index The index of the current completion.
+     * @return array<string> An array of completion suggestions.
      */
     public function contextAwareCompleter(string $input, int $index): array
     {
@@ -468,6 +504,15 @@ final class MakeEntityCommand extends Command
         }
     }
 
+    /**
+     * Sets the completion context and its associated completions.
+     *
+     * This method updates the current completion context and stores any additional
+     * completions that should be available in that context.
+     *
+     * @param CompletionContext $context The new completion context to set.
+     * @param array<string> $completions Optional additional completions for the context.
+     */
     private function setCompletionContext(CompletionContext $context, array $completions = []): void
     {
         $this->completionContext = $context->value;
@@ -482,7 +527,7 @@ final class MakeEntityCommand extends Command
      *
      * @param string $in The input string to complete.
      * @param int $i The index of the input (not used here).
-     * @return array An array of suggestions including the original input.
+     * @return array<string> An array of suggestions including the original input.
      */
     public function completeEntityName(string $in, int $i): array
     {
@@ -508,7 +553,6 @@ final class MakeEntityCommand extends Command
         $opts = array_filter($returnOpts, function ($entity) use ($inputVariants) {
             $normalizedEntity = strtolower($this->inflector->tableize($entity));
             foreach ($inputVariants as $variant) {
-                if ($variant === null) continue;
                 $variantNorm = strtolower($variant);
                 if (strpos($normalizedEntity, $variantNorm) !== false) {
                     return true;
@@ -549,7 +593,7 @@ final class MakeEntityCommand extends Command
      * Displays an error message to the user.
      *
      * @param string $kind
-     * @param array $opts
+     * @param array<string> $opts
      * @return string
      */
     private function chooseOption(string $kind, array $opts): string
@@ -690,12 +734,6 @@ final class MakeEntityCommand extends Command
         $this->info("✅  Created stub $file");
     }
 
-    /** Does $body already contain `public … $prop`? */
-    private function hasProperty(string $body, string $prop): bool
-    {
-        return (bool) preg_match('/public\s+(?:\?\w+|array)\s+\$' . preg_quote($prop, '/') . '\b/', $body);
-    }
-
     /**
      * Convert a class name to snake_case.
      *
@@ -709,7 +747,7 @@ final class MakeEntityCommand extends Command
     private function snake(string $class): string
     {
         return strtolower(
-            preg_replace('/([a-z])([A-Z])/', '\$1_\$2', $class)
+            preg_replace('/([a-z])([A-Z])/', '\$1_\$2', $class) ?? ''
         );
     }
 }

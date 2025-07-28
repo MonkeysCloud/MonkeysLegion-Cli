@@ -30,11 +30,19 @@ final class DatabaseMigrationCommand extends Command
         $entities = $this->scanner->scanDir(\base_path('app/Entity'));
 
         // 2. Read current DB schema
-        $schema = $this->connection->pdo()->query(
+        $stmt = $this->connection->pdo()->query(
             'SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
-               FROM information_schema.COLUMNS
-              WHERE TABLE_SCHEMA = DATABASE()'
-        )->fetchAll(\PDO::FETCH_GROUP | \PDO::FETCH_UNIQUE);
+             FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()'
+        );
+
+        if ($stmt === false) {
+            // Handle query error (throw, log, or return)
+            $this->error('Failed to fetch DB schema.');
+            return self::FAILURE;
+        }
+
+        $schema = $stmt->fetchAll(\PDO::FETCH_GROUP | \PDO::FETCH_UNIQUE);
 
         // 3. Generate diff SQL
         $sql = $this->generator->diff($entities, $schema);

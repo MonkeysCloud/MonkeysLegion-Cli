@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -13,8 +14,10 @@ final class MakeControllerCommand extends Command
 
     public function handle(): int
     {
-        $input = $_SERVER['argv'][2] ?? $this->ask('Enter controller name (e.g. User)');
-        $name  = preg_replace('/Controller$/', '', $input) . 'Controller';
+        $argv = $_SERVER['argv'] ?? [];
+        $input = (is_array($argv) && isset($argv[2])) ? $argv[2] : $this->ask('Enter controller name (e.g. User)');
+        $subject = is_string($input) ? $input : '';
+        $name  = preg_replace('/Controller$/', '', $subject) . 'Controller';
 
         if (!preg_match('/^[A-Z][A-Za-z0-9]+Controller$/', $name)) {
             return $this->fail('Invalid name: must be CamelCase and end with "Controller".');

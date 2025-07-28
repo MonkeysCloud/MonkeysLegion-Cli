@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -32,7 +33,7 @@ final class SchemaUpdateCommand extends Command
      */
     public function handle(): int
     {
-        $args  = $_SERVER['argv'];
+        $args = (array) ($_SERVER['argv'] ?? []);
         $dump  = in_array('--dump', $args, true);
         $force = in_array('--force', $args, true);
 
@@ -62,7 +63,7 @@ final class SchemaUpdateCommand extends Command
 
             try {
                 // split on “;” followed by newline / EOF
-                $stmts = preg_split('/;\\s*(?=\\R|$)/', trim($sql));
+                $stmts = preg_split('/;\\s*(?=\\R|$)/', trim($sql)) ?: [];
                 foreach ($stmts as $stmt) {
                     $stmt = trim($stmt);
                     if ($stmt === '') {
@@ -99,21 +100,28 @@ final class SchemaUpdateCommand extends Command
     /**
      * Introspect the MySQL schema into an array:
      *  [ tableName => [ columnName => columnInfoArray, … ], … ]
+     *
+     * @return array<string, array<string, array<string, mixed>>>
      */
     private function introspectSchema(): array
     {
-        $pdo    = $this->db->pdo();
-        $tables = $pdo
-            ->query("SHOW TABLES")
-            ->fetchAll(\PDO::FETCH_COLUMN);
+        $pdo = $this->db->pdo();
+
+        $tablesStmt = $this->safeQuery($pdo, "SHOW TABLES");
+        /** @var list<string> $tables */
+        $tables = $tablesStmt->fetchAll(\PDO::FETCH_COLUMN);
 
         $schema = [];
         foreach ($tables as $table) {
-            $cols = $pdo
-                ->query("SHOW COLUMNS FROM `{$table}`")
-                ->fetchAll(\PDO::FETCH_ASSOC);
+            $colsStmt = $this->safeQuery($pdo, "SHOW COLUMNS FROM `{$table}`");
+            /** @var list<array<string, mixed>> $cols */
+            $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
+
             $schema[$table] = [];
             foreach ($cols as $col) {
+                if (!isset($col['Field']) || !is_string($col['Field'])) {
+                    throw new \RuntimeException("Invalid column definition in table '{$table}'");
+                }
                 $schema[$table][$col['Field']] = $col;
             }
         }
