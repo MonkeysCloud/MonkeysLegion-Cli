@@ -33,36 +33,29 @@ final class MakeSeederCommand extends Command
         }
 
         $stub = <<<PHP
-<?php
-declare(strict_types=1);
+                <?php
+                declare(strict_types=1);
 
-namespace App\Database\Seeders;
+                namespace App\Database\Seeders;
 
-use MonkeysLegion\Database\MySQL\Connection;
+                use MonkeysLegion\Database\MySQL\Connection;
 
-class {$classname}
-{
-    /**
-     * Run the database seeds.
-     */
-    public function run(Connection \$db): void
-    {
-        // TODO: implement your seed logic here, e.g.:
-        // \$db->pdo()->exec(\"INSERT INTO users (name,email) VALUES ('Alice','alice@example.com')\");
-    }
-}
-PHP;
+                class {$classname}
+                {
+                    /**
+                     * Run the database seeds.
+                     */
+                    public function run(Connection \$db): void
+                    {
+                        // TODO: implement your seed logic here, e.g.:
+                        // \$db->pdo()->exec(\"INSERT INTO users (name,email) VALUES ('Alice','alice@example.com')\");
+                    }
+                }
+                PHP;
 
         file_put_contents($file, $stub);
         $this->info("✅  Created seeder stub: {$file}");
         return self::SUCCESS;
-    }
-
-    private function ask(string $q): string
-    {
-        return function_exists('readline')
-            ? trim(readline("$q ") ?: '')
-            : trim(fgets(STDIN) ?: '');
     }
 
     private function fail(string $msg): int

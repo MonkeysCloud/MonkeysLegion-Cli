@@ -15,6 +15,10 @@ use PhpParser\Node;
 use MonkeysLegion\Entity\Attributes\JoinTable;
 use PhpParser\Modifiers;
 use PhpParser\Parser;
+use PhpParser\Node\Arg;
+use PhpParser\Node\Name;
+use PhpParser\Node\Scalar;
+use PhpParser\Node\Expr;
 
 /**
  * ClassManipulator is a utility class for manipulating PHP classes using the PhpParser library.
@@ -43,6 +47,10 @@ class ClassManipulator
     /** @var string */
     private $file;
 
+    private array $owningShouldBePlural = [
+        RelationKind::ONE_TO_MANY->value,
+        RelationKind::MANY_TO_MANY->value,
+    ];
     /**
      * Mapping of attribute names to RelationKind enums.
      * This is used to convert string attributes to enum values.
@@ -96,14 +104,27 @@ class ClassManipulator
      * @param string $dbType The database type (e.g., 'integer', 'string').
      * @param string $phpType The PHP type (e.g., 'int', 'string').
      */
-    public function addScalarField(string $name, string $dbType, string $phpType): void
+    public function addScalarField(string $name, string $dbType, string $phpType, bool $nullable = false): void
     {
-        $attr = $this->builderFactory->attribute('Field', ['type' => $dbType]);
-        $prop = $this->builderFactory->property($name)
+        $attrArgs = [
+            new Arg(new Scalar\String_($dbType), false, false, [], new Node\Identifier('type'))
+        ];
+        if ($nullable) {
+            $attrArgs[] = new Arg(new Expr\ConstFetch(new Name('true')), false, false, [], new Node\Identifier('nullable'));
+            $phpType = '?' . ltrim($phpType, '?');
+        }
+        $attr = $this->builderFactory->attribute('Field', $attrArgs);
+
+        $propBuilder = $this->builderFactory->property($name)
             ->makePublic()
             ->setType($phpType)
-            ->addAttribute($attr)
-            ->getNode();
+            ->addAttribute($attr);
+
+        if ($nullable) {
+            $propBuilder->setDefault(null);
+        }
+
+        $prop = $propBuilder->getNode();
 
         $this->removeProperty($name);
         $this->insertProperty($prop);
@@ -154,11 +175,16 @@ class ClassManipulator
         bool $isOwningSide,
         ?string $otherProp = null,
         ?JoinTable $joinTable = null,
-        bool $inverseO2O = false
+        bool $inverseO2O = false,
+        bool $nullable = true
     ): void {
         $kind   = self::toEnum($kind);
         $attr   = $kind->value;
         $isMany = in_array($kind, self::COLLECTION_KINDS, true);
+
+        if ($kind === RelationKind::ONE_TO_MANY) {
+            $isOwningSide = false;
+        }
 
         if (!preg_match('/^[A-Z][A-Za-z0-9_]*$/', $targetShort)) {
             return;
@@ -209,27 +235,36 @@ class ClassManipulator
                 ->setDocComment($docComment)
                 ->getNode();
         } else {
-            $props[] = "    #[{$attr}(targetEntity: {$targetShort}::class{$extra})]";
-            $props[] = "    public ?{$targetShort} \${$name} = null;";
+            $phpType = $nullable ? ('?' . $targetShort) : $targetShort;
+            $defaultNull = $nullable ? null : null; // dejar null solo si nullable
 
-            $propNode = $this->builderFactory->property($name)
+            $props[] = "    #[{$attr}(targetEntity: {$targetShort}::class{$extra})]";
+            $props[] = "    public {$phpType} \${$name}" . ($nullable ? ' = null;' : ';');
+
+            // build the property with the builder, set default *before* getNode()
+            $propBuilder = $this->builderFactory->property($name)
                 ->makePublic()
-                ->setType('?' . $targetShort)
-                ->setDefault(null)
+                ->setType($nullable ? '?' . $targetShort : $targetShort)
                 ->addAttribute(
                     $this->builderFactory->attribute($attr, [
                         new Node\Arg(
                             new Node\Expr\ClassConstFetch(new Node\Name($targetShort), 'class'),
-                            false,
-                            false,
-                            [],
-                            new Node\Identifier('targetEntity')
+                            false,false,[], new Node\Identifier('targetEntity')
                         ),
                         ...$this->buildExtraArgs($otherProp, $kind, $isMany, $joinTable, $inverseO2O, $isOwningSide)
                     ])
-                )
-                ->getNode();
+                );
+
+            if ($nullable) {
+                // only the builder supports setDefault()
+                $propBuilder->setDefault(null);
+            }
+
+            // now convert into a Node
+            $propNode = $propBuilder->getNode();
         }
+
+        // Add property docblock
         $this->removeProperty($name);
         $this->insertProperty($propNode);
 
@@ -303,7 +338,7 @@ class ClassManipulator
             $setter = $this->builderFactory->method('set' . $stud)
                 ->makePublic()
                 ->setReturnType('self')
-                ->addParam($this->builderFactory->param($name)->setType($targetShort))
+                ->addParam($this->builderFactory->param($name)->setType($phpType))
                 ->addStmt(new Node\Expr\Assign(
                     new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
                     new Node\Expr\Variable($name)
@@ -350,23 +385,18 @@ class ClassManipulator
     ): array {
         $attrEnum = self::toEnum($attr);
         $args = [];
+
         if ($attrEnum === RelationKind::ONE_TO_ONE && $inverseO2O && $otherProp) {
-            $args[] = new Node\Arg(
-                new Node\Scalar\String_($otherProp),
-                false,
-                false,
-                [],
-                new Node\Identifier('mappedBy')
-            );
+            $args[] = new Node\Arg(new Node\Scalar\String_($otherProp), false, false, [], new Node\Identifier('mappedBy'));
         } elseif ($otherProp) {
-            $args[] = new Node\Arg(
-                new Node\Scalar\String_($otherProp),
-                false,
-                false,
-                [],
-                new Node\Identifier($isOwningSide ? 'inversedBy' : 'mappedBy')
-            );
+            // >>> SPECIAL-CASE: OneToMany always mappedBy
+            $param = ($attrEnum === RelationKind::ONE_TO_MANY)
+                ? 'mappedBy'
+                : ($isOwningSide ? 'inversedBy' : 'mappedBy');
+
+            $args[] = new Node\Arg(new Node\Scalar\String_($otherProp), false, false, [], new Node\Identifier($param));
         }
+
         if ($attrEnum === RelationKind::MANY_TO_MANY && $isOwningSide && $joinTable) {
             $args[] = new Node\Arg(
                 new Node\Expr\New_(
@@ -547,7 +577,7 @@ class ClassManipulator
      */
     public function save(): void
     {
-        $code = $this->prettyPrinter->prettyPrint($this->ast);
+        $code = $this->prettyPrinter->prettyPrintFile($this->ast ?? []);
         $code = $this->formatCode($code);
 
         // Ensure the code starts with <?php

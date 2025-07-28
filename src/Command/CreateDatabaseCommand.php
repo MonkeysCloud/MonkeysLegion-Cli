@@ -45,7 +45,6 @@ final class CreateDatabaseCommand extends Command
             [$k, $v] = array_map('trim', explode('=', $chunk, 2));
             $parts[$k] = $v;
         }
-        print_r($parts);
         $host = $parts['host']   ?? '127.0.0.1';
         $port = $parts['port']   ?? 3306;
         $db   = $parts['dbname'] ?? 'app';

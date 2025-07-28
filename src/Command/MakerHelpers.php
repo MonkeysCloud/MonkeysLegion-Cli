@@ -8,8 +8,9 @@ trait MakerHelpers
 {
     private function ask(string $prompt): string
     {
-        echo $prompt . ' ';
-        return trim(fgets(STDIN));
+        return function_exists('readline')
+            ? trim(readline("$prompt ") ?: '')
+            : trim(fgets(STDIN) ?: '');
     }
 
     private function fail(string $msg): int

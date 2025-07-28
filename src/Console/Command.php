@@ -51,6 +51,19 @@ abstract class Command
         return $stmt;
     }
 
+    /**
+     * Prompts the user with a question and retrieves their input.
+     *
+     * @param string $q The question to prompt the user with.
+     * @return string The user's input after trimming whitespace.
+     */
+    protected function ask(string $prompt): string
+    {
+        return function_exists('readline')
+            ? trim(readline("$prompt ") ?: '')
+            : trim(fgets(STDIN) ?: '');
+    }
+
     /* ---------- runtime entry point -------------------------------------- */
 
     public function __invoke(): int
