@@ -235,7 +235,7 @@ final class MakeEntityCommand extends Command
                 $m['other_prop'] ?? null,
                 $m['joinTable'] ?? null,
                 $kindEnum === RelationKind::ONE_TO_ONE && !($m['owning'] ?? true),
-                $m['nullable'] ?? true
+                $m['nullable'] ?? false
             );
         }
         $manipulator->save();
@@ -342,8 +342,9 @@ final class MakeEntityCommand extends Command
             sort($arr);
             $default = implode('_', $arr);
             $tbl = $this->ask("  Join table name [$default]") ?: $default;
-            $colA = $this->ask("  Column for {$selfClass} [{$arr[0]}_id]") ?: "{$arr[0]}_id";
-            $colB = $this->ask("  Column for {$short} [{$arr[1]}_id]") ?: "{$arr[1]}_id";
+            // Fix column order to match proper foreign key convention
+            $colA = $this->ask("  Column for {$selfClass} [{$this->snake($a)}_id]") ?: "{$this->snake($a)}_id";
+            $colB = $this->ask("  Column for {$short} [{$this->snake($b)}_id]") ?: "{$this->snake($b)}_id";
             $joinTable = new JoinTable(name: $tbl, joinColumn: $colA, inverseColumn: $colB);
             if (!in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
                 $nullable = strtolower($this->ask('  Is this relation optional/nullable? [y/N]')) === 'y';
@@ -378,11 +379,11 @@ final class MakeEntityCommand extends Command
             $invAttr = lcfirst($invRelationKind->value);
 
             if (in_array($invAttr, $this->inverseShouldBePlural, true)) {
-                // proper plural, e.g. “companies”
-                $defName = $this->inflector->pluralize($invAttr);
+                // proper plural based on the current entity name, e.g. "users"
+                $defName = lcfirst($this->inflector->pluralize($selfClass));
             } else {
-                // singular
-                $defName = $invAttr;
+                // singular based on the current entity name
+                $defName = lcfirst($selfClass);
             }
 
             $inverseProp = $this->ask("  Inverse property in $short [{$defName}]") ?: $defName;
@@ -834,5 +835,4 @@ final class MakeEntityCommand extends Command
                 break;
         }
     }
-
 }

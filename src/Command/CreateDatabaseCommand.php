@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Command;
-use MonkeysLegion\Cli\Concerns\Confirmable;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 
 /**
@@ -16,8 +15,6 @@ use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 #[CommandAttr('db:create', 'Create the schema using .env credentials')]
 final class CreateDatabaseCommand extends Command
 {
-    use Confirmable;
-
     public function handle(): int
     {
         /* ── 1. load DSN / creds from config (.env already parsed there) ── */

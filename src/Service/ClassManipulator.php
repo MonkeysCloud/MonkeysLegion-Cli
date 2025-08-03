@@ -244,12 +244,15 @@ class ClassManipulator
             // build the property with the builder, set default *before* getNode()
             $propBuilder = $this->builderFactory->property($name)
                 ->makePublic()
-                ->setType($nullable ? '?' . $targetShort : $targetShort)
+                ->setType($phpType)
                 ->addAttribute(
                     $this->builderFactory->attribute($attr, [
                         new Node\Arg(
                             new Node\Expr\ClassConstFetch(new Node\Name($targetShort), 'class'),
-                            false,false,[], new Node\Identifier('targetEntity')
+                            false,
+                            false,
+                            [],
+                            new Node\Identifier('targetEntity')
                         ),
                         ...$this->buildExtraArgs($otherProp, $kind, $isMany, $joinTable, $inverseO2O, $isOwningSide)
                     ])
@@ -327,7 +330,7 @@ class ClassManipulator
             // getter
             $getter = $this->builderFactory->method('get' . $stud)
                 ->makePublic()
-                ->setReturnType('?' . $targetShort)
+                ->setReturnType($phpType)
                 ->addStmt(new Node\Stmt\Return_(
                     new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name)
                 ))
@@ -347,19 +350,21 @@ class ClassManipulator
                 ->getNode();
             $this->insertMethod($setter);
 
-            // remove/unset
-            $remove = $this->builderFactory->method('remove' . $stud)
-                ->makePublic()
-                ->setReturnType('self')
-                ->addStmt(
-                    new Node\Expr\Assign(
-                        new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
-                        new Node\Expr\ConstFetch(new Node\Name('null'))
+            // Only generate remove method if property is nullable
+            if ($nullable) {
+                $remove = $this->builderFactory->method('remove' . $stud)
+                    ->makePublic()
+                    ->setReturnType('self')
+                    ->addStmt(
+                        new Node\Expr\Assign(
+                            new Node\Expr\PropertyFetch(new Node\Expr\Variable('this'), $name),
+                            new Node\Expr\ConstFetch(new Node\Name('null'))
+                        )
                     )
-                )
-                ->addStmt(new Node\Stmt\Return_(new Node\Expr\Variable('this')))
-                ->getNode();
-            $this->insertMethod($remove);
+                    ->addStmt(new Node\Stmt\Return_(new Node\Expr\Variable('this')))
+                    ->getNode();
+                $this->insertMethod($remove);
+            }
         }
     }
 
@@ -484,7 +489,7 @@ class ClassManipulator
         $stmts = &$this->classNode->stmts;
         $insertIndex = $this->findPropertyInsertionPoint($stmts);
 
-        // Remove blank lines immediately before/after the insertion point to avoid duplicates
+        // Clean up existing blank lines around the insertion point
         if ($insertIndex > 0 && $this->isBlankLine($stmts[$insertIndex - 1])) {
             array_splice($stmts, $insertIndex - 1, 1);
             $insertIndex--;
@@ -493,21 +498,41 @@ class ClassManipulator
             array_splice($stmts, $insertIndex, 1);
         }
 
-        // Always insert a blank line before the property except for the very first property (usually 'id')
-        if ($insertIndex > 0) {
-            if ($stmts[$insertIndex - 1] instanceof Property) {
-                array_splice($stmts, $insertIndex, 0, [$this->newLineNode()]);
-                $insertIndex++;
-            }
+        // Insert blank line before property unless it's the first one
+        if ($insertIndex > 0 && !$this->isFirstProperty($insertIndex, $stmts)) {
+            array_splice($stmts, $insertIndex, 0, [$this->newLineNode()]);
+            $insertIndex++;
         }
 
+        // Insert the property
         array_splice($stmts, $insertIndex, 0, [$prop]);
         $insertIndex++;
 
-        // Always insert a blank line after the property unless next is already blank or method
-        if (!isset($stmts[$insertIndex]) || !$this->isBlankLine($stmts[$insertIndex])) {
+        // Always insert a blank line after the property if next is a property or method
+        if (
+            isset($stmts[$insertIndex]) &&
+            !$this->isBlankLine($stmts[$insertIndex]) &&
+            ($stmts[$insertIndex] instanceof Property || $stmts[$insertIndex] instanceof ClassMethod)
+        ) {
             array_splice($stmts, $insertIndex, 0, [$this->newLineNode()]);
         }
+    }
+
+    /**
+     * Checks if the insertion point is for the first property in the class.
+     * 
+     * @param int $index The current insertion index.
+     * @param array<\PhpParser\Node\Stmt> $stmts The class statements.
+     * @return bool True if this is the first property.
+     */
+    private function isFirstProperty(int $index, array $stmts): bool
+    {
+        for ($i = 0; $i < $index; $i++) {
+            if ($stmts[$i] instanceof Property) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -546,6 +571,13 @@ class ClassManipulator
             }
         }
         $insertIndex = $lastMethodIndex >= 0 ? $lastMethodIndex + 1 : count($stmts);
+
+        // Only add blank line if there's a previous method
+        if ($lastMethodIndex >= 0) {
+            array_splice($stmts, $insertIndex, 0, []);
+            $insertIndex++;
+        }
+
         array_splice($stmts, $insertIndex, 0, [$method]);
     }
 
@@ -619,29 +651,50 @@ class ClassManipulator
             $code
         ) ?: '';
 
-        // Add blank lines between ALL properties (not just Field attributes)
+        // Ensure consistent blank lines between properties with attributes
         $code = preg_replace(
-            '/(#\[[^\]]*\]\s*\n\s*public\s+[^;]+;)\s*\n(\s*#\[)/m',
+            '/(#\[[^\]]*\]\s*\n\s*public\s+[^;]+;)\s*\n(?!\s*\n)(\s*#\[)/m',
             "$1\n\n$2",
             $code
         ) ?: '';
 
         // Add blank line after properties before methods
         $code = preg_replace(
-            '/(public\s+[^;]+;)\s*\n(\s*public\s+function)/m',
+            '/(public\s+[^;]+;)\s*\n(?!\s*\n)(\s*public\s+function)/m',
             "$1\n\n$2",
             $code
         ) ?: '';
 
-        // Ensure single blank line between methods
+        // Ensure exactly one blank line between methods (not two)
         $code = preg_replace(
-            '/(\}\s*\n)(\s*public\s+function)/m',
-            "$1\n$2",
+            '/(\}\s*\n+)(\s*public\s+function)/m',
+            "}\n\n$2",
             $code
         ) ?: '';
 
-        // Remove multiple consecutive blank lines
+        // Remove multiple consecutive blank lines (keep max 2)
         $code = preg_replace('/\n{3,}/', "\n\n", $code) ?: '';
+
+        // Ensure there's exactly one newline before the class closing brace
+        $code = preg_replace('/(\}\s*)\n*(\s*\})$/', "$1\n$2", $code) ?: '';
+
+        // Remove unnecessary blank line before class closing brace
+        $code = preg_replace('/(\}\s*)\n+(\s*\})$/', "$1$2", $code) ?: '';
+
+        // Ensure proper spacing around attribute groups
+        $code = preg_replace('/(^|\n)(\s*)(#\[)/', "$1$2$3", $code) ?: '';
+
+        // Normalize property definitions to have consistent spacing
+        $code = preg_replace('/(\s*)(public|protected|private)(\s+)/', "$1$2 ", $code) ?: '';
+
+        // Fix attribute casing - ensure first letter is uppercase for attribute names
+        $code = preg_replace_callback(
+            '/#\[\s*(one(?:To(?:One|Many))|many(?:To(?:One|Many)))\s*\(/i',
+            function ($matches) {
+                return '#[' . ucfirst($matches[1]) . '(';
+            },
+            $code
+        ) ?: '';
 
         return $code;
     }

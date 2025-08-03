@@ -7,15 +7,12 @@ namespace MonkeysLegion\Cli\Command;
 use MonkeysLegion\Database\MySQL\Connection;
 use MonkeysLegion\Entity\Scanner\EntityScanner;
 use MonkeysLegion\Migration\MigrationGenerator;
-use MonkeysLegion\Cli\Concerns\Confirmable;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 
 #[CommandAttr('make:migration', 'Generate SQL diff from entities to MySQL schema')]
 final class DatabaseMigrationCommand extends Command
 {
-    use Confirmable;
-
     public function __construct(
         private Connection        $connection,
         private EntityScanner     $scanner,

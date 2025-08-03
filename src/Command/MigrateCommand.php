@@ -6,7 +6,6 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Database\MySQL\Connection;
 use MonkeysLegion\Cli\Console\Command;
-use MonkeysLegion\Cli\Concerns\Confirmable;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use PDO;
 use PDOException;
@@ -14,8 +13,6 @@ use PDOException;
 #[CommandAttr('migrate', 'Run outstanding migrations')]
 final class MigrateCommand extends Command
 {
-    use Confirmable;
-
     private const MIGRATIONS_TABLE = 'ml_migrations';
 
     public function __construct(private Connection $connection)
