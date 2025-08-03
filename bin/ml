@@ -10,23 +10,26 @@ use MonkeysLegion\Framework\HttpBootstrap;
  */
 
 // 1) Climb folders to find vendor/autoload.php
-$dir = __DIR__;
-$found = false;
-while ($dir !== dirname($dir)) {
-    $candidate = $dir . '/vendor/autoload.php';
-    if (file_exists($candidate)) {
-        require_once $candidate;
-        define('ML_BASE_PATH', $dir);
-        $found = true;
-        break;
-    }
-    $dir = dirname($dir);
-}
+$dir = __DIR__ . '/../../app-test';
+// $found = false;
+// while ($dir !== dirname($dir)) {
+//     $candidate = $dir . '/vendor/autoload.php';
+//     if (file_exists($candidate)) {
+//         require_once $candidate;
+//         define('ML_BASE_PATH', $dir);
+//         $found = true;
+//         break;
+//     }
+//     $dir = dirname($dir);
+// }
 
-if (! $found) {
-    fwrite(STDERR, "Error: could not find vendor/autoload.php above " . __DIR__ . "\n");
-    exit(1);
-}
+require_once $dir . '/vendor/autoload.php';
+define('ML_BASE_PATH', $dir);
+
+// if (! $found) {
+//     fwrite(STDERR, "Error: could not find vendor/autoload.php above " . __DIR__ . "\n");
+//     exit(1);
+// }
 
 // 2) Load your DI definitions from the project config
 $configFile = ML_BASE_PATH . '/config/app.php';
