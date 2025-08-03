@@ -335,32 +335,34 @@ final class MakeEntityCommand extends Command
         $joinTable = null;
         /* property name */
         if ($attr === RelationKind::MANY_TO_MANY->value) {
-            // default table name: alphabetical snake
-            [$a, $b] = [lcfirst($selfClass), lcfirst($short)];
-            // build array, then sort it by reference
-            $arr = [$this->snake($a), $this->snake($b)];
-            sort($arr);
-            $default = implode('_', $arr);
-            $tbl = $this->ask("  Join table name [$default]") ?: $default;
-            // Fix column order to match proper foreign key convention
-            $colA = $this->ask("  Column for {$selfClass} [{$this->snake($a)}_id]") ?: "{$this->snake($a)}_id";
-            $colB = $this->ask("  Column for {$short} [{$this->snake($b)}_id]") ?: "{$this->snake($b)}_id";
-            $joinTable = new JoinTable(name: $tbl, joinColumn: $colA, inverseColumn: $colB);
-            if (!in_array($attr, ['OneToMany', 'ManyToMany'], true)) {
-                $nullable = strtolower($this->ask('  Is this relation optional/nullable? [y/N]')) === 'y';
-            } else {
-                $owning = true;
-            }
-            $nullable = false;
-            // Default owning by relation kind (will be overridden for M2M above)
-            if (!isset($owning)) {
-                $owning = match ($relCase) {
-                    RelationKind::ONE_TO_MANY  => false, // inverse
-                    RelationKind::MANY_TO_ONE  => true,  // owning
-                    RelationKind::ONE_TO_ONE   => true,  // pick current side as owning
-                    RelationKind::MANY_TO_MANY => true,  // handled above
-                };
-            }
+            // ── Defaults ────────────────────────────────────────────────
+            $snakeSelf   = $this->snake(lcfirst($selfClass));   // e.g. "user"
+            $snakeTarget = $this->snake(lcfirst($short));       // e.g. "role"
+
+            // Table name: keep alphabetical for stability
+            $tblParts   = [$snakeSelf, $snakeTarget];
+            sort($tblParts);                                    // only for table
+            $defaultTbl = implode('_', $tblParts);              // "role_user"
+
+            // ── Prompt ────────────────────────────────────────────────
+            $tbl  = $this->ask("  Join table name [$defaultTbl]") ?: $defaultTbl;
+
+            // Column names must map to the correct side (no sorting here!)
+            $colA = $this->ask("  Column for {$selfClass} [{$snakeSelf}_id]")
+                ?: "{$snakeSelf}_id";                       // "user_id"
+            $colB = $this->ask("  Column for {$short} [{$snakeTarget}_id]")
+                ?: "{$snakeTarget}_id";                     // "role_id"
+
+            // Build JoinTable metadata
+            $joinTable = new JoinTable(
+                name:          $tbl,
+                joinColumn:    $colA,   // FK to *this* entity
+                inverseColumn: $colB    // FK to target entity
+            );
+
+            // ── M2M specifics ──────────────────────────────────────────
+            $nullable = false;  // collections are never nullable
+            $owning   = true;   // current side owns the join table
         }
         $prop = $this->ask("  Property name [$suggest]") ?: $suggest;
         if ($prop === '' || isset($existing[$prop]) || isset($this->relNames[$prop])) return;
