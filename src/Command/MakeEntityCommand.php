@@ -710,11 +710,9 @@ final class MakeEntityCommand extends Command
     }
 
     /**
-     * Create a repository stub file for a given entity.
+     * Generate a repository class stub for a given entity.
      *
-     * @param string $entity The name of the entity for which the repository stub should be created.
-     *
-     * @return void
+     * @param string $entity  Short class name of the entity (e.g. “User”)
      */
     private function createRepoStub(string $entity): void
     {
@@ -727,52 +725,60 @@ final class MakeEntityCommand extends Command
             return;
         }
 
-        $table = $this->snake($entity);
+        // a simple table guess – adapt if you have another rule
+        $table = strtolower($entity);
 
         $code = <<<PHP
-                <?php
-                declare(strict_types=1);
+        <?php
+        declare(strict_types=1);
 
-                namespace App\Repository;
+        namespace App\Repository;
 
-                use MonkeysLegion\Repository\EntityRepository;
-                use App\Entity\\{$entity};
+        use MonkeysLegion\Repository\EntityRepository;
+        use App\Entity\\{$entity};
 
-                /**
-                 * @extends EntityRepository<{$entity}>
-                 */
-                class {$entity}Repository extends EntityRepository
-                {
-                    protected string \$table       = '$table';
-                    protected string \$entityClass = {$entity}::class;
+        /**
+         * @extends EntityRepository<{$entity}>
+         */
+        class {$entity}Repository extends EntityRepository
+        {
+            /** @var non-empty-string */
+            protected string \$table       = '{$table}';
+            protected string \$entityClass = {$entity}::class;
 
-                    /**
-                     * Shortcut that keeps return type specific to {$entity}.
-                     *
-                     * @param array<string,mixed> \$criteria
-                     * @return {$entity}[]
-                     */
-                    public function findAll(array \$criteria = []): array
-                    {
-                        /** @var {$entity}[] \$result */
-                        \$result = parent::findAll(\$criteria);
-                        return \$result;
-                    }
+            // ──────────────────────────────────────────────────────────
+            //  Typed convenience wrappers (optional)
+            //  Keep them if you like the stricter return types; otherwise
+            //  feel free to delete them and rely on the parent methods.
+            // ──────────────────────────────────────────────────────────
 
-                    /**
-                     * Typed wrapper around parent::findOneBy().
-                     *
-                     * @param array<string,mixed> \$criteria
-                     */
-                    public function findOneBy(array \$criteria): ?{$entity}
-                    {
-                        /** @var ?{$entity} \$result */
-                        \$result = parent::findOneBy(\$criteria);
-                        return \$result;
-                    }
-                }
-                    
-                PHP;
+            /**
+             * @param array<string,mixed> \$criteria
+             * @return {$entity}[]
+             */
+            public function findAll(
+                array \$criteria = [],
+                bool  \$loadRelations = true
+            ): array {
+                /** @var {$entity}[] \$rows */
+                \$rows = parent::findAll(\$criteria, \$loadRelations);
+                return \$rows;
+            }
+
+            /**
+             * @param array<string,mixed> \$criteria
+             */
+            public function findOneBy(
+                array \$criteria,
+                bool  \$loadRelations = true
+            ): ?{$entity} {
+                /** @var ?{$entity} \$row */
+                \$row = parent::findOneBy(\$criteria, \$loadRelations);
+                return \$row;
+            }
+        }
+
+        PHP;
 
         file_put_contents($file, $code);
         $this->info("✅  Created stub $file");
@@ -791,7 +797,7 @@ final class MakeEntityCommand extends Command
     private function snake(string $class): string
     {
         return strtolower(
-            preg_replace('/([a-z])([A-Z])/', '\$1_\$2', $class) ?? ''
+            preg_replace('/([a-z])([A-Z])/', '$1_$2', $class) ?? ''
         );
     }
 
