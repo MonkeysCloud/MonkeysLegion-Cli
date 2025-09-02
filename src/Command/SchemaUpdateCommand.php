@@ -6,7 +6,7 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
-use MonkeysLegion\Database\MySQL\Connection;
+use MonkeysLegion\Database\Contracts\ConnectionInterface;
 use MonkeysLegion\Entity\Scanner\EntityScanner;
 use MonkeysLegion\Migration\MigrationGenerator;
 use ReflectionException;
@@ -18,7 +18,7 @@ use ReflectionException;
 final class SchemaUpdateCommand extends Command
 {
     public function __construct(
-        private Connection $db,
+        private ConnectionInterface $db,
         private EntityScanner $scanner,
         private MigrationGenerator $generator
     ) {

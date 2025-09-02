@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
 
-use MonkeysLegion\Database\MySQL\Connection;
+use MonkeysLegion\Database\Contracts\ConnectionInterface;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 
 #[CommandAttr('rollback', 'Undo the last batch of migrations')]
 final class RollbackCommand extends Command
 {
-    public function __construct(private Connection $connection)
+    public function __construct(private ConnectionInterface $connection)
     {
         parent::__construct();
     }
