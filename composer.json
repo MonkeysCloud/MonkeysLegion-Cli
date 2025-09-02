@@ -17,6 +17,15 @@
     "monkeyscloud/monkeyslegion": "^1.0",
     "doctrine/inflector": "^2.0"
   },
+  "repositories": [
+    {
+      "type": "path",
+      "url": "../MonkeysLegion",
+      "options": {
+        "symlink": true
+      }
+    }
+  ],
   "autoload": {
     "psr-4": {
       "MonkeysLegion\\Cli\\": "src/"

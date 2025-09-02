@@ -6,7 +6,7 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
-use MonkeysLegion\Database\MySQL\Connection;
+use MonkeysLegion\Database\Contracts\ConnectionInterface;
 
 #[CommandAttr(
     'db:seed',
@@ -14,7 +14,7 @@ use MonkeysLegion\Database\MySQL\Connection;
 )]
 final class SeedCommand extends Command
 {
-    public function __construct(private Connection $db)
+    public function __construct(private ConnectionInterface $db)
     {
         parent::__construct();
     }
@@ -23,7 +23,7 @@ final class SeedCommand extends Command
     {
         $argv = (array)($_SERVER['argv'] ?? []);
         $target = $argv[2] ?? null;
-        if(!is_string($target) || $target === '') {
+        if (!is_string($target) || $target === '') {
             $this->line('No seeder specified.');
             return self::FAILURE;
         }
