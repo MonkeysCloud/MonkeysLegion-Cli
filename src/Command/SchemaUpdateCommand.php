@@ -37,6 +37,20 @@ final class SchemaUpdateCommand extends Command
         $dump  = in_array('--dump', $args, true);
         $force = in_array('--force', $args, true);
 
+        // Check if database exists first
+        if (!$this->checkDatabaseExists()) {
+            $response = $this->ask('Database does not exist. Create it? (y/N)');
+            if (strtolower(trim($response)) !== 'y' && strtolower(trim($response)) !== 'yes') {
+                $this->error('Aborted. Database creation declined.');
+                return self::FAILURE;
+            }
+
+            if (!$this->createDatabase()) {
+                $this->error('Failed to create database.');
+                return self::FAILURE;
+            }
+        }
+
         // 1) Scan your Entity classes directory
         $this->line('🔍 Scanning entities…');
         $entities = $this->scanner->scanDir(base_path('app/Entity')); // ← use scanDir()
@@ -126,5 +140,111 @@ final class SchemaUpdateCommand extends Command
             }
         }
         return $schema;
+    }
+
+    /**
+     * Check if the database exists by attempting to connect to it.
+     */
+    private function checkDatabaseExists(): bool
+    {
+        try {
+            $this->db->pdo();
+            return true;
+        } catch (\PDOException $e) {
+            // Database doesn't exist or connection failed
+            return false;
+        }
+    }
+
+    /**
+     * Create the database using configuration from .env
+     */
+    private function createDatabase(): bool
+    {
+        /** 
+         * @var array{
+         *   default: string,
+         *   connections: array<string, array<string, mixed>>
+         * } $cfg
+         */
+        $cfg  = require base_path('config/database.php');
+        $conn = $cfg['connections'][$cfg['default']] ?? [];
+
+        $dsn = isset($conn['dsn']) && is_string($conn['dsn']) ? $conn['dsn'] : '';
+        $appUser = isset($conn['username']) && is_string($conn['username']) ? $conn['username'] : 'root';
+        $appPass = isset($conn['password']) && is_string($conn['password']) ? $conn['password'] : '';
+
+        if (!str_starts_with($dsn, 'mysql:')) {
+            $this->error('Database creation skipped – driver not MySQL.');
+            return false;
+        }
+
+        // Parse DSN to get database name and connection details
+        $parts = [];
+        foreach (explode(';', substr($dsn, 6)) as $chunk) {
+            if ($chunk === '') continue;
+            [$k, $v] = array_map('trim', explode('=', $chunk, 2));
+            $parts[$k] = $v;
+        }
+        $host = $parts['host'] ?? '127.0.0.1';
+        $port = $parts['port'] ?? 3306;
+        $db = $parts['dbname'] ?? 'app';
+
+        $dsnTpl = 'mysql:host=%s;port=%s;charset=utf8mb4';
+
+        try {
+            // Connect without specifying database
+            $pdo = new \PDO(
+                sprintf($dsnTpl, $host, $port),
+                $appUser,
+                $appPass,
+                [
+                    \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                    \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                ]
+            );
+
+            // Create the database
+            $pdo->exec(
+                sprintf(
+                    'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+                    $db
+                )
+            );
+
+            $this->info("✔️  Database '{$db}' created successfully.");
+            return true;
+        } catch (\PDOException $e) {
+            if ($host !== '127.0.0.1') {
+                // Retry with localhost
+                try {
+                    $pdo = new \PDO(
+                        sprintf($dsnTpl, '127.0.0.1', $port),
+                        $appUser,
+                        $appPass,
+                        [
+                            \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                        ]
+                    );
+
+                    $pdo->exec(
+                        sprintf(
+                            'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+                            $db
+                        )
+                    );
+
+                    $this->info("✔️  Database '{$db}' created successfully.");
+                    return true;
+                } catch (\PDOException $retryE) {
+                    $this->error("Failed to create database: {$retryE->getMessage()}");
+                    return false;
+                }
+            }
+
+            $this->error("Failed to create database: {$e->getMessage()}");
+            return false;
+        }
     }
 }
