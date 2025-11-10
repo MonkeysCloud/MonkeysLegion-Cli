@@ -120,6 +120,13 @@ class ClassManipulator
             ->setType($phpType)
             ->addAttribute($attr);
 
+        // Add #[Uuid] attribute if field type is 'uuid'
+        if (strtolower($dbType) === 'uuid') {
+            $uuidAttr = $this->builderFactory->attribute('Uuid');
+            $propBuilder->addAttribute($uuidAttr);
+            $this->ensureUseStatement('MonkeysLegion\\Entity\\Attributes\\Uuid');
+        }
+
         if ($nullable) {
             $propBuilder->setDefault(null);
         }
@@ -722,5 +729,59 @@ class ClassManipulator
             'manytomany' => RelationKind::MANY_TO_MANY,
             default      => RelationKind::from($kind),
         };
+    }
+
+    /**
+     * Ensures a use statement exists in the file's namespace.
+     * 
+     * @param string $fqcn Fully qualified class name to import
+     */
+    private function ensureUseStatement(string $fqcn): void
+    {
+        if (!$this->ast) {
+            return;
+        }
+
+        // Find namespace node
+        $namespace = null;
+        foreach ($this->ast as $node) {
+            if ($node instanceof Node\Stmt\Namespace_) {
+                $namespace = $node;
+                break;
+            }
+        }
+
+        if (!$namespace) {
+            return;
+        }
+
+        // Check if use statement already exists
+        foreach ($namespace->stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\Use_) {
+                foreach ($stmt->uses as $use) {
+                    if ($use->name->toString() === $fqcn) {
+                        return; // Already exists
+                    }
+                }
+            }
+        }
+
+        // Add the use statement after existing use statements
+        $lastUseIndex = -1;
+        foreach ($namespace->stmts as $i => $stmt) {
+            if ($stmt instanceof Node\Stmt\Use_) {
+                $lastUseIndex = $i;
+            } elseif ($stmt instanceof Node\Stmt\Class_) {
+                break;
+            }
+        }
+
+        $useStmt = new Node\Stmt\Use_([
+            new \PhpParser\Node\UseItem(new Node\Name($fqcn))
+        ]);
+
+        // Insert after last use statement, or at the beginning if no use statements exist
+        $insertIndex = $lastUseIndex >= 0 ? $lastUseIndex + 1 : 0;
+        array_splice($namespace->stmts, $insertIndex, 0, [$useStmt]);
     }
 }
