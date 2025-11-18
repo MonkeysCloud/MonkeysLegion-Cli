@@ -12,14 +12,14 @@ namespace MonkeysLegion\Cli\Console\Traits;
  * 
  * Usage:
  * ```php
- * $this->colorLine()
+ * $this->cliLine()
  *     ->add('Error: ', 'red', 'bold')
  *     ->add('File not found ', 'white')
  *     ->add('/path/to/file', 'yellow', 'underline')
  *     ->print();
  * 
  * // Or build and get the string
- * $output = $this->colorLine()
+ * $output = $this->cliLine()
  *     ->add('Success: ', 'green', 'bold')
  *     ->add('Task completed!', 'white')
  *     ->build();
@@ -27,57 +27,6 @@ namespace MonkeysLegion\Cli\Console\Traits;
  */
 trait Cli
 {
-    /**
-     * ANSI color codes mapping
-     */
-    public const array COLORS = [
-        'black'   => 30,
-        'red'     => 31,
-        'green'   => 32,
-        'yellow'  => 33,
-        'blue'    => 34,
-        'magenta' => 35,
-        'cyan'    => 36,
-        'white'   => 37,
-        'gray'    => 90,
-        'bright_red'     => 91,
-        'bright_green'   => 92,
-        'bright_yellow'  => 93,
-        'bright_blue'    => 94,
-        'bright_magenta' => 95,
-        'bright_cyan'    => 96,
-        'bright_white'   => 97,
-    ];
-
-    /**
-     * ANSI background color codes mapping
-     */
-    public const array BG_COLORS = [
-        'black'   => 40,
-        'red'     => 41,
-        'green'   => 42,
-        'yellow'  => 43,
-        'blue'    => 44,
-        'magenta' => 45,
-        'cyan'    => 46,
-        'white'   => 47,
-        'gray'    => 100,
-    ];
-
-    /**
-     * ANSI style codes mapping
-     */
-    public const array STYLES = [
-        'bold'          => 1,
-        'dim'           => 2,
-        'italic'        => 3,
-        'underline'     => 4,
-        'blink'         => 5,
-        'reverse'       => 7,
-        'hidden'        => 8,
-        'strikethrough' => 9,
-    ];
-
     /**
      * Creates a new CliLineBuilder instance.
      *
@@ -115,6 +64,57 @@ trait Cli
  */
 class CliLineBuilder
 {
+    /**
+     * ANSI color codes mapping
+     */
+    private const array COLORS = [
+        'black'   => 30,
+        'red'     => 31,
+        'green'   => 32,
+        'yellow'  => 33,
+        'blue'    => 34,
+        'magenta' => 35,
+        'cyan'    => 36,
+        'white'   => 37,
+        'gray'    => 90,
+        'bright_red'     => 91,
+        'bright_green'   => 92,
+        'bright_yellow'  => 93,
+        'bright_blue'    => 94,
+        'bright_magenta' => 95,
+        'bright_cyan'    => 96,
+        'bright_white'   => 97,
+    ];
+
+    /**
+     * ANSI background color codes mapping
+     */
+    private const array BG_COLORS = [
+        'black'   => 40,
+        'red'     => 41,
+        'green'   => 42,
+        'yellow'  => 43,
+        'blue'    => 44,
+        'magenta' => 45,
+        'cyan'    => 46,
+        'white'   => 47,
+        'gray'    => 100,
+    ];
+
+    /**
+     * ANSI style codes mapping
+     */
+    private const array STYLES = [
+        'bold'          => 1,
+        'dim'           => 2,
+        'italic'        => 3,
+        'underline'     => 4,
+        'blink'         => 5,
+        'reverse'       => 7,
+        'hidden'        => 8,
+        'strikethrough' => 9,
+    ];
+
     /** @var array<array{text: string, codes: int[]}> */
     private array $segments = [];
 
@@ -136,20 +136,20 @@ class CliLineBuilder
         $codes = [];
 
         // Add color code
-        $colorCode = Cli::COLORS[$color] ?? Cli::COLORS['white'];
+        $colorCode = self::COLORS[$color] ?? self::COLORS['white'];
         $codes[] = $colorCode;
 
         // Add background color if specified
-        if ($bgColor !== null && isset(Cli::BG_COLORS[$bgColor])) {
-            $codes[] = Cli::BG_COLORS[$bgColor];
+        if ($bgColor !== null && isset(self::BG_COLORS[$bgColor])) {
+            $codes[] = self::BG_COLORS[$bgColor];
         }
 
         // Add style codes
         if ($styles !== null) {
             $styleArray = is_array($styles) ? $styles : [$styles];
             foreach ($styleArray as $style) {
-                if (isset(Cli::STYLES[$style])) {
-                    $codes[] = Cli::STYLES[$style];
+                if (isset(self::STYLES[$style])) {
+                    $codes[] = self::STYLES[$style];
                 }
             }
         }
