@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Console;
 
+use MonkeysLegion\Cli\Console\Traits\Cli;
 use PDO;
 use PDOStatement;
 
 abstract class Command
 {
+    use Cli;
+
     public const int SUCCESS = 0;
     public const int FAILURE = 1;
 
@@ -62,6 +65,34 @@ abstract class Command
         return function_exists('readline')
             ? trim(readline("$prompt ") ?: '')
             : trim(fgets(STDIN) ?: '');
+    }
+
+    /**
+     * Get a command line argument by index.
+     * Index 0 returns the argument after the command name.
+     * 
+     * For example, in "php ml mail:work queue_name":
+     * - argument(0) returns "queue_name"
+     * - argument(1) returns the next argument, etc.
+     *
+     * @param int $index The argument index (0-based, relative to command)
+     * @return string|null The argument value or null if not set
+     */
+    protected function argument(int $index): ?string
+    {
+        global $argv;
+
+        if (!is_array($argv)) {
+            return null;
+        }
+
+        // Find where the command starts (after "php ml")
+        // Typically: argv[0] = "ml", argv[1] = "command:name", argv[2+] = arguments
+        // For "php ml mail:work queue_name": argv[0]="ml", argv[1]="mail:work", argv[2]="queue_name"
+        $commandIndex = 1; // The command is at index 1 after the script name
+        $argumentIndex = $commandIndex + 1 + $index; // Skip script and command, then apply index
+
+        return $argv[$argumentIndex] ?? null;
     }
 
     /* ---------- runtime entry point -------------------------------------- */
