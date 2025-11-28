@@ -14,7 +14,6 @@
     "monkeyscloud/monkeyslegion-core": "^1.0",
     "monkeyscloud/monkeyslegion-di": "^1.0",
     "monkeyscloud/monkeyslegion-entity": "^1.0",
-    "monkeyscloud/monkeyslegion": "^1.0",
     "doctrine/inflector": "^2.0"
   },
   "autoload": {
