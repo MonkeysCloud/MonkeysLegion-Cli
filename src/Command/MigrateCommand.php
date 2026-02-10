@@ -9,7 +9,6 @@ use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use PDO;
 use PDOException;
-use RuntimeException;
 
 #[CommandAttr('migrate', 'Run outstanding migrations')]
 final class MigrateCommand extends Command

@@ -196,9 +196,10 @@ final class SchemaUpdateCommand extends Command
              ORDER BY ordinal_position
         SQL;
 
+        $colsStmt = $pdo->prepare($colSql);
+
         $schema = [];
         foreach ($tables as $table) {
-            $colsStmt = $pdo->prepare($colSql);
             $colsStmt->execute(['schema' => $pgSchema, 'table' => $table]);
             /** @var list<array<string, mixed>> $cols */
             $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
@@ -298,13 +299,19 @@ final class SchemaUpdateCommand extends Command
             $stmt = $pdo->prepare("SELECT 1 FROM pg_database WHERE datname = :db");
             $stmt->execute(['db' => $db]);
 
+            $created = false;
             if (!$stmt->fetch()) {
                 // Safe: $db validated above against strict identifier regex
                 $quoted = '"' . str_replace('"', '""', $db) . '"';
                 $pdo->exec("CREATE DATABASE {$quoted} ENCODING 'UTF8'");
+                $created = true;
             }
 
-            $this->info("✔️  Database '{$db}' created successfully.");
+            if ($created) {
+                $this->info("✔️  Database '{$db}' created successfully.");
+            } else {
+                $this->info("ℹ️  Database '{$db}' already exists, skipping creation.");
+            }
             return true;
         } catch (\PDOException $e) {
             $this->error("Failed to create database: {$e->getMessage()}");
