@@ -86,8 +86,10 @@ final class SchemaUpdateCommand extends Command
                     try {
                         $pdo->exec($stmt);
                     } catch (\PDOException $e) {
-                        // ignore “already exists” / duplicate-column errors
-                        if (in_array($e->getCode(), ['42S21', '42S01'], true)) {
+                        // ignore "already exists" / duplicate-column errors
+                        // MySQL: 42S21 (dup column), 42S01 (dup table)
+                        // PostgreSQL: 42P07 (dup table), 42701 (dup column)
+                        if (in_array($e->getCode(), ['42S21', '42S01', '42P07', '42701'], true)) {
                             $this->line('Skipped: ' . substr($stmt, 0, 50) . '…');
                             continue;
                         }
@@ -112,15 +114,33 @@ final class SchemaUpdateCommand extends Command
     }
 
     /**
-     * Introspect the MySQL schema into an array:
+     * Introspect the database schema into an array:
      *  [ tableName => [ columnName => columnInfoArray, … ], … ]
+     *
+     * Returns the same structure for both MySQL and PostgreSQL so that
+     * MigrationGenerator::diff() can consume it identically.
      *
      * @return array<string, array<string, array<string, mixed>>>
      */
     private function introspectSchema(): array
     {
-        $pdo = $this->db->pdo();
+        $pdo    = $this->db->pdo();
+        $driver = $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
 
+        if ($driver === 'pgsql') {
+            return $this->introspectPgsql($pdo);
+        }
+
+        return $this->introspectMysql($pdo);
+    }
+
+    /**
+     * MySQL introspection via SHOW TABLES / SHOW COLUMNS.
+     *
+     * @return array<string, array<string, array<string, mixed>>>
+     */
+    private function introspectMysql(\PDO $pdo): array
+    {
         $tablesStmt = $this->safeQuery($pdo, "SHOW TABLES");
         /** @var list<string> $tables */
         $tables = $tablesStmt->fetchAll(\PDO::FETCH_COLUMN);
@@ -128,6 +148,59 @@ final class SchemaUpdateCommand extends Command
         $schema = [];
         foreach ($tables as $table) {
             $colsStmt = $this->safeQuery($pdo, "SHOW COLUMNS FROM `{$table}`");
+            /** @var list<array<string, mixed>> $cols */
+            $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            $schema[$table] = [];
+            foreach ($cols as $col) {
+                if (!isset($col['Field']) || !is_string($col['Field'])) {
+                    throw new \RuntimeException("Invalid column definition in table '{$table}'");
+                }
+                $schema[$table][$col['Field']] = $col;
+            }
+        }
+        return $schema;
+    }
+
+    /**
+     * PostgreSQL introspection via pg_tables / information_schema.columns.
+     *
+     * Column rows are aliased to the same keys that MySQL returns
+     * (Field, Type, Null, Default, Extra) so the diff layer receives a
+     * uniform structure.
+     *
+     * @return array<string, array<string, array<string, mixed>>>
+     */
+    private function introspectPgsql(\PDO $pdo): array
+    {
+        // Resolve the active schema from search_path rather than hardcoding 'public'
+        $schemaStmt = $pdo->query('SELECT current_schema()');
+        $pgSchema   = $schemaStmt !== false ? ($schemaStmt->fetchColumn() ?: 'public') : 'public';
+
+        $tablesStmt = $pdo->prepare(
+            'SELECT tablename FROM pg_tables WHERE schemaname = :schema'
+        );
+        $tablesStmt->execute(['schema' => $pgSchema]);
+        /** @var list<string> $tables */
+        $tables = $tablesStmt->fetchAll(\PDO::FETCH_COLUMN);
+
+        $colSql = <<<'SQL'
+            SELECT column_name     AS "Field",
+                   data_type       AS "Type",
+                   is_nullable     AS "Null",
+                   column_default  AS "Default",
+                   CASE WHEN column_default LIKE 'nextval%%' THEN 'auto_increment' ELSE '' END AS "Extra"
+              FROM information_schema.columns
+             WHERE table_schema = :schema
+               AND table_name  = :table
+             ORDER BY ordinal_position
+        SQL;
+
+        $colsStmt = $pdo->prepare($colSql);
+
+        $schema = [];
+        foreach ($tables as $table) {
+            $colsStmt->execute(['schema' => $pgSchema, 'table' => $table]);
             /** @var list<array<string, mixed>> $cols */
             $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
 
@@ -174,12 +247,83 @@ final class SchemaUpdateCommand extends Command
         $appUser = isset($conn['username']) && is_string($conn['username']) ? $conn['username'] : 'root';
         $appPass = isset($conn['password']) && is_string($conn['password']) ? $conn['password'] : '';
 
-        if (!str_starts_with($dsn, 'mysql:')) {
-            $this->error('Database creation skipped – driver not MySQL.');
+        if (str_starts_with($dsn, 'pgsql:')) {
+            return $this->createDatabasePgsql($dsn, $appUser, $appPass);
+        }
+
+        if (str_starts_with($dsn, 'mysql:')) {
+            return $this->createDatabaseMysql($dsn, $appUser, $appPass);
+        }
+
+        $this->error('Database creation skipped – unsupported driver.');
+        return false;
+    }
+
+    /**
+     * Create a PostgreSQL database via the 'postgres' maintenance DB.
+     */
+    private function createDatabasePgsql(string $dsn, string $appUser, string $appPass): bool
+    {
+        // Parse all DSN options so we preserve sslmode, options, etc.
+        $parts = [];
+        foreach (explode(';', substr($dsn, 6)) as $chunk) {
+            if ($chunk === '') continue;
+            [$k, $v] = array_map('trim', explode('=', $chunk, 2));
+            $parts[$k] = $v;
+        }
+        $db = $parts['dbname'] ?? 'app';
+
+        // Validate identifier: only word chars, digits, hyphens, dots allowed
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\-\.]*$/', $db)) {
+            $this->error("Invalid database name: '{$db}'");
             return false;
         }
 
-        // Parse DSN to get database name and connection details
+        // Rebuild DSN swapping dbname to 'postgres' while keeping every other option
+        $parts['dbname'] = 'postgres';
+        $maintenanceDsn  = 'pgsql:' . implode(';', array_map(
+            static fn(string $k, string $v): string => "{$k}={$v}",
+            array_keys($parts),
+            array_values($parts)
+        ));
+
+        try {
+            $pdo = new \PDO(
+                $maintenanceDsn,
+                $appUser,
+                $appPass,
+                [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]
+            );
+
+            // Check if database already exists
+            $stmt = $pdo->prepare("SELECT 1 FROM pg_database WHERE datname = :db");
+            $stmt->execute(['db' => $db]);
+
+            $created = false;
+            if (!$stmt->fetch()) {
+                // Safe: $db validated above against strict identifier regex
+                $quoted = '"' . str_replace('"', '""', $db) . '"';
+                $pdo->exec("CREATE DATABASE {$quoted} ENCODING 'UTF8'");
+                $created = true;
+            }
+
+            if ($created) {
+                $this->info("✔️  Database '{$db}' created successfully.");
+            } else {
+                $this->info("ℹ️  Database '{$db}' already exists, skipping creation.");
+            }
+            return true;
+        } catch (\PDOException $e) {
+            $this->error("Failed to create database: {$e->getMessage()}");
+            return false;
+        }
+    }
+
+    /**
+     * Create a MySQL database (original logic preserved).
+     */
+    private function createDatabaseMysql(string $dsn, string $appUser, string $appPass): bool
+    {
         $parts = [];
         foreach (explode(';', substr($dsn, 6)) as $chunk) {
             if ($chunk === '') continue;
@@ -188,12 +332,11 @@ final class SchemaUpdateCommand extends Command
         }
         $host = $parts['host'] ?? '127.0.0.1';
         $port = $parts['port'] ?? 3306;
-        $db = $parts['dbname'] ?? 'app';
+        $db   = $parts['dbname'] ?? 'app';
 
         $dsnTpl = 'mysql:host=%s;port=%s;charset=utf8mb4';
 
         try {
-            // Connect without specifying database
             $pdo = new \PDO(
                 sprintf($dsnTpl, $host, $port),
                 $appUser,
@@ -204,7 +347,6 @@ final class SchemaUpdateCommand extends Command
                 ]
             );
 
-            // Create the database
             $pdo->exec(
                 sprintf(
                     'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
@@ -216,7 +358,6 @@ final class SchemaUpdateCommand extends Command
             return true;
         } catch (\PDOException $e) {
             if ($host !== '127.0.0.1') {
-                // Retry with localhost
                 try {
                     $pdo = new \PDO(
                         sprintf($dsnTpl, '127.0.0.1', $port),
