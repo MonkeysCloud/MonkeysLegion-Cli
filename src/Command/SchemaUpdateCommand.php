@@ -93,6 +93,19 @@ final class SchemaUpdateCommand extends Command
                             $this->line('Skipped: ' . substr($stmt, 0, 50) . '…');
                             continue;
                         }
+
+                        // PostgreSQL 2BP01: dependent objects still exist
+                        // Retry DROP statements with CASCADE; other statements are fatal
+                        if ($e->getCode() === '2BP01') {
+                            if (preg_match('/^\s*DROP\s/i', $stmt)) {
+                                $cascadeStmt = rtrim($stmt) . ' CASCADE';
+                                $pdo->exec($cascadeStmt);
+                                $this->line('Retried with CASCADE: ' . substr($stmt, 0, 50) . '…');
+                                continue;
+                            }
+                            // Non-DROP 2BP01 → surface the error so ordering can be fixed
+                        }
+
                         throw $e;   // anything else is fatal
                     }
                 }
