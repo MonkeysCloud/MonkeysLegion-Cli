@@ -9,6 +9,7 @@ use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use PDO;
 use PDOException;
+use RuntimeException;
 
 #[CommandAttr('migrate', 'Run outstanding migrations')]
 final class MigrateCommand extends Command
@@ -28,20 +29,14 @@ final class MigrateCommand extends Command
             /* -----------------------------------------------------------------
          | 1) Ensure the bookkeeping table exists
          * ----------------------------------------------------------------*/
-            $pdo->exec(
-                'CREATE TABLE IF NOT EXISTS ' . self::MIGRATIONS_TABLE . ' (
-                id          INT AUTO_INCREMENT PRIMARY KEY,
-                filename    VARCHAR(255) NOT NULL,
-                batch       INT NOT NULL,
-                executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-            );
+            $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $pdo->exec($this->migrationsTableDdl($driver));
 
             /* -----------------------------------------------------------------
          | 2) Determine pending migrations
          * ----------------------------------------------------------------*/
             $table = self::MIGRATIONS_TABLE;
-            $applied = $this->safeQuery($pdo, "SELECT filename FROM `$table`")
+            $applied = $this->safeQuery($pdo, "SELECT filename FROM {$table}")
                 ->fetchAll(PDO::FETCH_COLUMN);
 
             $files   = \glob(\base_path('var/migrations/*.sql')) ?: [];
@@ -53,7 +48,7 @@ final class MigrateCommand extends Command
             }
 
             $batch = (int) (
-                $this->safeQuery($pdo, "SELECT MAX(batch) FROM `$table`")
+                $this->safeQuery($pdo, "SELECT MAX(batch) FROM {$table}")
                 ->fetchColumn() ?: 0
             ) + 1;
 
@@ -82,8 +77,10 @@ final class MigrateCommand extends Command
                         try {
                             $pdo->exec($stmt);
                         } catch (PDOException $e) {
-                            // Skip duplicate‐column or table‐exists errors
-                            if (in_array($e->getCode(), ['42S21', '42S01'], true)) {
+                            // Skip duplicate-column or table-exists errors
+                            // MySQL: 42S21 (dup column), 42S01 (dup table)
+                            // PostgreSQL: 42P07 (dup table), 42701 (dup column)
+                            if (in_array($e->getCode(), ['42S21', '42S01', '42P07', '42701'], true)) {
                                 $this->line('Skipped (already applied statement): ' . substr($stmt, 0, 50) . '…');
                                 continue;
                             }
@@ -118,5 +115,31 @@ final class MigrateCommand extends Command
             $this->error($e->getMessage());
             return self::FAILURE;
         }
+    }
+
+    /**
+     * Return the CREATE TABLE DDL for the migrations bookkeeping table,
+     * adapted to the current database driver.
+     */
+    private function migrationsTableDdl(string $driver): string
+    {
+        $table = self::MIGRATIONS_TABLE;
+
+        if ($driver === 'pgsql') {
+            return "CREATE TABLE IF NOT EXISTS {$table} (
+                id          SERIAL PRIMARY KEY,
+                filename    VARCHAR(255) NOT NULL,
+                batch       INT NOT NULL,
+                executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )";
+        }
+
+        // MySQL (default)
+        return "CREATE TABLE IF NOT EXISTS {$table} (
+            id          INT AUTO_INCREMENT PRIMARY KEY,
+            filename    VARCHAR(255) NOT NULL,
+            batch       INT NOT NULL,
+            executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     }
 }
