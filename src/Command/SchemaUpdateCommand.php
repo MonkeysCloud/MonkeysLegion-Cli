@@ -173,12 +173,14 @@ final class SchemaUpdateCommand extends Command
      */
     private function introspectPgsql(\PDO $pdo): array
     {
-        $tablesStmt = $pdo->query(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+        // Resolve the active schema from search_path rather than hardcoding 'public'
+        $schemaStmt = $pdo->query('SELECT current_schema()');
+        $pgSchema   = $schemaStmt !== false ? ($schemaStmt->fetchColumn() ?: 'public') : 'public';
+
+        $tablesStmt = $pdo->prepare(
+            'SELECT tablename FROM pg_tables WHERE schemaname = :schema'
         );
-        if ($tablesStmt === false) {
-            throw new \RuntimeException('Failed to list PostgreSQL tables');
-        }
+        $tablesStmt->execute(['schema' => $pgSchema]);
         /** @var list<string> $tables */
         $tables = $tablesStmt->fetchAll(\PDO::FETCH_COLUMN);
 
@@ -189,7 +191,7 @@ final class SchemaUpdateCommand extends Command
                    column_default  AS "Default",
                    CASE WHEN column_default LIKE 'nextval%%' THEN 'auto_increment' ELSE '' END AS "Extra"
               FROM information_schema.columns
-             WHERE table_schema = 'public'
+             WHERE table_schema = :schema
                AND table_name  = :table
              ORDER BY ordinal_position
         SQL;
@@ -197,7 +199,7 @@ final class SchemaUpdateCommand extends Command
         $schema = [];
         foreach ($tables as $table) {
             $colsStmt = $pdo->prepare($colSql);
-            $colsStmt->execute(['table' => $table]);
+            $colsStmt->execute(['schema' => $pgSchema, 'table' => $table]);
             /** @var list<array<string, mixed>> $cols */
             $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
 
@@ -261,20 +263,32 @@ final class SchemaUpdateCommand extends Command
      */
     private function createDatabasePgsql(string $dsn, string $appUser, string $appPass): bool
     {
+        // Parse all DSN options so we preserve sslmode, options, etc.
         $parts = [];
         foreach (explode(';', substr($dsn, 6)) as $chunk) {
             if ($chunk === '') continue;
             [$k, $v] = array_map('trim', explode('=', $chunk, 2));
             $parts[$k] = $v;
         }
-        $host = $parts['host'] ?? '127.0.0.1';
-        $port = $parts['port'] ?? 5432;
-        $db   = $parts['dbname'] ?? 'app';
+        $db = $parts['dbname'] ?? 'app';
+
+        // Validate identifier: only word chars, digits, hyphens, dots allowed
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\-\.]*$/', $db)) {
+            $this->error("Invalid database name: '{$db}'");
+            return false;
+        }
+
+        // Rebuild DSN swapping dbname to 'postgres' while keeping every other option
+        $parts['dbname'] = 'postgres';
+        $maintenanceDsn  = 'pgsql:' . implode(';', array_map(
+            static fn(string $k, string $v): string => "{$k}={$v}",
+            array_keys($parts),
+            array_values($parts)
+        ));
 
         try {
-            // Connect to the 'postgres' maintenance database
             $pdo = new \PDO(
-                sprintf('pgsql:host=%s;port=%s;dbname=postgres', $host, $port),
+                $maintenanceDsn,
                 $appUser,
                 $appPass,
                 [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]
@@ -285,8 +299,9 @@ final class SchemaUpdateCommand extends Command
             $stmt->execute(['db' => $db]);
 
             if (!$stmt->fetch()) {
-                // Identifier quoting – $db comes from config, not user input
-                $pdo->exec("CREATE DATABASE \"{$db}\" ENCODING 'UTF8'");
+                // Safe: $db validated above against strict identifier regex
+                $quoted = '"' . str_replace('"', '""', $db) . '"';
+                $pdo->exec("CREATE DATABASE {$quoted} ENCODING 'UTF8'");
             }
 
             $this->info("✔️  Database '{$db}' created successfully.");
