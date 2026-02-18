@@ -27,19 +27,53 @@ final class DatabaseMigrationCommand extends Command
         $entities = $this->scanner->scanDir(\base_path('app/Entity'));
 
         // 2. Read current DB schema
-        $stmt = $this->connection->pdo()->query(
-            'SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
-             FROM information_schema.COLUMNS
-             WHERE TABLE_SCHEMA = DATABASE()'
-        );
+        $pdo    = $this->connection->pdo();
+        $driver = $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
 
-        if ($stmt === false) {
-            // Handle query error (throw, log, or return)
-            $this->error('Failed to fetch DB schema.');
-            return self::FAILURE;
+        $schema = [];
+
+        if ($driver === 'mysql') {
+            $tablesStmt = $this->safeQuery($pdo, "SHOW TABLES");
+            $tables = $tablesStmt->fetchAll(\PDO::FETCH_COLUMN);
+
+            foreach ($tables as $table) {
+                $colsStmt = $this->safeQuery($pdo, "SHOW COLUMNS FROM `{$table}`");
+                $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
+
+                $schema[$table] = [];
+                foreach ($cols as $col) {
+                    $type = (string) ($col['Type'] ?? '');
+                    $schema[$table][$col['Field']] = [
+                        'type'     => $type,
+                        'nullable' => (strtoupper($col['Null'] ?? '') === 'YES'),
+                        'default'  => $col['Default'] ?? null,
+                        'length'   => preg_match('/\((.*)\)/', $type, $matches) ? $matches[1] : null,
+                    ];
+                }
+            }
+        } elseif ($driver === 'pgsql') {
+            $tablesStmt = $this->safeQuery($pdo, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
+            $tables = $tablesStmt->fetchAll(\PDO::FETCH_COLUMN);
+
+            $colSql = 'SELECT column_name, data_type, is_nullable, column_default 
+                       FROM information_schema.columns 
+                       WHERE table_schema = \'public\' AND table_name = :table';
+            $colsStmt = $pdo->prepare($colSql);
+
+            foreach ($tables as $table) {
+                $colsStmt->execute(['table' => $table]);
+                $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
+
+                $schema[$table] = [];
+                foreach ($cols as $col) {
+                    $schema[$table][$col['column_name']] = [
+                        'type'     => $col['data_type'] ?? '',
+                        'nullable' => (strtoupper($col['is_nullable'] ?? '') === 'YES'),
+                        'default'  => $col['column_default'] ?? null,
+                    ];
+                }
+            }
         }
-
-        $schema = $stmt->fetchAll(\PDO::FETCH_GROUP | \PDO::FETCH_UNIQUE);
 
         // 3. Generate diff SQL
         $sql = $this->generator->diff($entities, $schema);

@@ -169,7 +169,13 @@ final class SchemaUpdateCommand extends Command
                 if (!isset($col['Field']) || !is_string($col['Field'])) {
                     throw new \RuntimeException("Invalid column definition in table '{$table}'");
                 }
-                $schema[$table][$col['Field']] = $col;
+                $type = (string) ($col['Type'] ?? '');
+                $schema[$table][$col['Field']] = [
+                    'type'     => $type,
+                    'nullable' => (strtoupper($col['Null'] ?? '') === 'YES'),
+                    'default'  => $col['Default'] ?? null,
+                    'length'   => preg_match('/\((.*)\)/', $type, $matches) ? $matches[1] : null,
+                ];
             }
         }
         return $schema;
@@ -222,7 +228,13 @@ final class SchemaUpdateCommand extends Command
                 if (!isset($col['Field']) || !is_string($col['Field'])) {
                     throw new \RuntimeException("Invalid column definition in table '{$table}'");
                 }
-                $schema[$table][$col['Field']] = $col;
+                $type = (string) ($col['Type'] ?? '');
+                $schema[$table][$col['Field']] = [
+                    'type'     => $type,
+                    'nullable' => (strtoupper($col['Null'] ?? '') === 'YES'),
+                    'default'  => $col['Default'] ?? null,
+                    'length'   => preg_match('/\((.*)\)/', $type, $matches) ? $matches[1] : null,
+                ];
             }
         }
         return $schema;

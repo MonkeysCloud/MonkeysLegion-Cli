@@ -252,6 +252,71 @@ abstract class Command
         return $options;
     }
 
+    /**
+     * Check if a file exists, using base_path for relative paths.
+     *
+     * @param string $path
+     * @return bool
+     */
+    protected function fileExists(string $path): bool
+    {
+        $fullPath = str_starts_with($path, '/')
+            ? $path
+            : \base_path($path);
+        return \file_exists($fullPath);
+    }
+
+    /**
+     * Publish (copy) a file from src to dest.
+     * Uses base_path for relative paths.
+     * Shows interactive CLI output.
+     *
+     * @param string $src Source file path
+     * @param string $dest Destination file path
+     * @return bool True if successful, false otherwise
+     */
+    protected function publish(string $src, string $dest): bool
+    {
+        $srcPath = str_starts_with($src, '/') ? $src : \base_path($src);
+        $destPath = str_starts_with($dest, '/') ? $dest : \base_path($dest);
+
+        if (!\file_exists($srcPath)) {
+            $this->cliLine()
+                ->error('Source file does not exist: ')
+                ->add($srcPath, 'yellow')
+                ->print();
+            return false;
+        }
+
+        if (\file_exists($destPath)) {
+            $this->cliLine()
+                ->warning('Destination already exists: ')
+                ->add($destPath, 'yellow')
+                ->print();
+            $overwrite = $this->ask('Overwrite? (y/N)');
+            if (\strtolower($overwrite) !== 'y') {
+                $this->cliLine()
+                    ->muted('Skipped publishing.')
+                    ->print();
+                return false;
+            }
+        }
+
+        if (!@copy($srcPath, $destPath)) {
+            $this->cliLine()
+                ->error('Failed to publish file to: ')
+                ->add($destPath, 'yellow')
+                ->print();
+            return false;
+        }
+
+        $this->cliLine()
+            ->success('Published: ')
+            ->add($destPath, 'green')
+            ->print();
+        return true;
+    }
+
     /* ---------- runtime entry point -------------------------------------- */
 
     public function __invoke(): int

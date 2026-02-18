@@ -39,6 +39,8 @@ final class MigrateCommand extends Command
                 ->fetchAll(PDO::FETCH_COLUMN);
 
             $files   = \glob(\base_path('var/migrations/*.sql')) ?: [];
+            // Normalize paths to absolute for comparison
+            $applied = array_map(fn($f) => str_starts_with($f, '/') ? $f : \base_path($f), $applied);
             $pending = \array_values(\array_diff($files, $applied));
 
             if ($pending === []) {
@@ -64,7 +66,7 @@ final class MigrateCommand extends Command
                     }
 
                     // Execute each SQL statement separately
-                    $statements = preg_split('/;\s*(?=\n|\r|$)/', trim($sql));
+                    $statements = preg_split('/;\s*(?=\r?\n|$)/', trim($sql));
                     if (!$statements) {
                         throw new \RuntimeException("Failed to parse SQL file: {$file}");
                     }
@@ -74,6 +76,7 @@ final class MigrateCommand extends Command
                             continue;
                         }
                         try {
+                            // Debugging log if necessary, but keep it clean
                             $pdo->exec($stmt);
                         } catch (PDOException $e) {
                             // Skip duplicate-column or table-exists errors
