@@ -39,8 +39,7 @@ final class CommandFinder
                         $file->isFile()
                         && $file->getExtension() === 'php'
                     ) {
-                        require_once $file->getPathname();
-
+                        // Do not require the file here; let the autoloader handle it.
                         $class = $ns
                             . str_replace(
                                 '/',
