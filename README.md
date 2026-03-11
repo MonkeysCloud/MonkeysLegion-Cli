@@ -81,5 +81,57 @@ The package ships with a suite of commands covering database setup, migrations, 
 
 Run `vendor/bin/ml` or `vendor/bin/ml list` to see the full, attribute-driven catalog available in your installation.【F:src/CliKernel.php†L245-L360】
 
+## Programmatic execution with MLRunner
+Use `MonkeysLegion\Cli\Application\MLRunner` when you need to run CLI commands from application code (controllers, jobs, tests, internal tools).
+
+```php
+<?php
+
+use MonkeysLegion\Cli\Application\MLRunner;
+use MonkeysLegion\Cli\CliKernel;
+use MonkeysLegion\Cli\Support\CommandFinder;
+
+// Bootstrap once (example)
+$kernel = new CliKernel(CommandFinder::all());
+MLRunner::boot($kernel);
+
+// 1) Run and get exit code
+$code = MLRunner::call('migrate');
+
+// 2) Capture command output
+$output = MLRunner::capture('route:list');
+
+// 3) Get structured result
+$result = MLRunner::inspect('db:seed');
+// ['exit_code' => 0, 'output' => '...', 'success' => true]
+
+// 4) Execute raw argv-style input
+$code = MLRunner::raw(['ml', 'make:entity', 'User']);
+
+// 5) Run silently (discard output)
+$code = MLRunner::silent('cache:clear');
+
+// 6) Process-style terminate with exit code
+// MLRunner::terminate('list');
+```
+
+### MLRunner API quick reference
+- `MLRunner::boot(CliKernel $kernel): void`  
+  Registers the kernel instance used by all static runner calls.
+- `MLRunner::call(string $command): int`  
+  Executes a command string, strips optional `ml ` prefix, and returns exit code.
+- `MLRunner::capture(string $command): string`  
+  Executes and returns buffered output.
+- `MLRunner::inspect(string $command): array{exit_code:int,output:string,success:bool}`  
+  Executes and returns structured diagnostics.
+- `MLRunner::raw(array $args): int`  
+  Executes argv-style input (`['ml', 'command', ...]`).
+- `MLRunner::silent(string $command): int`  
+  Executes while suppressing all output.
+- `MLRunner::terminate(string $command): never`  
+  Executes and exits current PHP process using command exit code.
+
+> Note: `MLRunner::boot()` must be called before running commands.
+
 ## Troubleshooting
 If a command fails to load or execute, the kernel prints colored warnings and errors. Setting `APP_DEBUG=true` will include stack traces for runtime failures.【F:src/CliKernel.php†L124-L240】 Missing configuration files (e.g., `config/app.php`) will cause the entrypoint to exit with a descriptive error before bootstrapping.【F:bin/ml†L12-L36】

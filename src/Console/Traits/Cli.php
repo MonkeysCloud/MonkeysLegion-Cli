@@ -277,16 +277,30 @@ class CliLineBuilder
 
     /**
      * Print the colored line to output.
+     * * Handles Web/CLI environment detection automatically.
      *
      * @param bool $newline Whether to add a newline at the end
-     * @param resource $stream Output stream (STDOUT or STDERR)
+     * @param resource|null $stream Output stream (defaults to STDOUT or php://output)
      */
-    public function print(bool $newline = true, $stream = STDOUT): void
+    public function print(bool $newline = true, $stream = null): void
     {
+        // Fallback logic: If no stream provided, use STDOUT (CLI) or php://output (Web)
+        if ($stream === null) {
+            $stream = defined('STDOUT') ? STDOUT : fopen('php://output', 'w');
+        }
+
         $output = $this->build();
+
+        // If we are in a Web context (ob_start is active), we likely want to 
+        // strip ANSI codes unless we specifically want them for a terminal emulator.
+        if (!defined('STDOUT')) {
+            $output = $this->toPlainText();
+        }
+
         if ($newline) {
             $output .= PHP_EOL;
         }
+
         fwrite($stream, $output);
     }
 
@@ -297,7 +311,9 @@ class CliLineBuilder
      */
     public function printError(bool $newline = true): void
     {
-        $this->print($newline, STDERR);
+        // Fallback for STDERR
+        $stream = defined('STDERR') ? STDERR : fopen('php://output', 'w');
+        $this->print($newline, $stream);
     }
 
     /**
