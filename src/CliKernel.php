@@ -83,38 +83,7 @@ final class CliKernel
             $this->loadingErrors[] = "Error discovering vendor commands: {$e->getMessage()}";
         }
 
-        // 3. Auto-discover application commands (App\Cli\Command\*)
-        try {
-            $appCommandDir = base_path('app/Cli/Command');
-            if (is_dir($appCommandDir)) {
-                $appFiles = glob($appCommandDir . '/*.php') ?: [];
-                foreach ($appFiles as $file) {
-                    try {
-                        require_once $file;
-                    } catch (\Throwable $e) {
-                        $this->loadingErrors[] = "Failed to load app command file '" . basename($file) . "': {$e->getMessage()}";
-                    }
-                }
-
-                foreach (get_declared_classes() as $class) {
-                    if (
-                        str_starts_with($class, 'App\\Cli\\Command\\') &&
-                        is_subclass_of($class, Command::class)
-                    ) {
-                        try {
-                            /** @var class-string<Command> $class */
-                            $this->register($class);
-                        } catch (\Throwable $e) {
-                            $this->loadingErrors[] = "Failed to register app command '{$class}': {$e->getMessage()}";
-                        }
-                    }
-                }
-            }
-        } catch (\Throwable $e) {
-            $this->loadingErrors[] = "Error discovering application commands: {$e->getMessage()}";
-        }
-
-        // 4. Build grouped commands by prefix
+        // 3. Build grouped commands by prefix
         try {
             $this->buildGroupedCommands();
         } catch (\Throwable $e) {
