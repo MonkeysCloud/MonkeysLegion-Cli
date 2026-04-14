@@ -8,7 +8,8 @@ use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Router\RouteCache;
 use MonkeysLegion\Router\RouteCollection;
-use MonkeysLegion\Core\Routing\RouteLoader;
+use MonkeysLegion\Router\ControllerScanner;
+use MonkeysLegion\Router\RouteCompiler;
 
 /**
  * CLI command for managing route cache.
@@ -24,7 +25,7 @@ final class RouteCacheCommand extends Command
     public function __construct(
         private RouteCache $cache,
         private RouteCollection $routes,
-        private RouteLoader $loader
+        private ControllerScanner $scanner
     ) {
         parent::__construct();
     }
@@ -48,19 +49,19 @@ final class RouteCacheCommand extends Command
         $this->info('Caching routes...');
 
         // Ensure routes are loaded
-        $this->loader->loadControllers();
+        $this->scanner->scan(base_path('app/Controller'), 'App\\Controller');
 
-        // Get all routes from collection
-        $allRoutes = $this->routes->all();
-        $namedRoutes = $this->routes->getNamedRoutes();
+        // Compile the routes
+        $compiler = new RouteCompiler();
+        $compiled = $compiler->compile($this->routes);
 
         // Save to cache
-        if ($this->cache->save($allRoutes, $namedRoutes)) {
-            $count = count($allRoutes);
-            $named = count($namedRoutes);
+        if ($this->cache->save($compiled)) {
+            $total = count($compiled->allRoutes());
+            $named = count(array_filter($compiled->allRoutes(), fn($r) => $r->name !== ''));
 
             $this->info('✅  Routes cached successfully!');
-            $this->line("   Total routes: {$count}");
+            $this->line("   Total routes: {$total}");
             $this->line("   Named routes: {$named}");
 
             $stats = $this->cache->getStats();
@@ -112,8 +113,9 @@ final class RouteCacheCommand extends Command
         // Load and display route stats
         $cached = $this->cache->load();
         if ($cached) {
-            $totalRoutes = count($cached['routes'] ?? []);
-            $namedRoutes = count($cached['namedRoutes'] ?? []);
+            $allRoutes   = $cached->allRoutes();
+            $totalRoutes = count($allRoutes);
+            $namedRoutes = count(array_filter($allRoutes, fn($r) => $r->name !== ''));
 
             $this->line('');
             $this->info('Cached Routes:');
@@ -122,8 +124,8 @@ final class RouteCacheCommand extends Command
 
             // Group by method
             $byMethod = [];
-            foreach ($cached['routes'] ?? [] as $route) {
-                $method = $route['method'] ?? 'UNKNOWN';
+            foreach ($allRoutes as $route) {
+                $method = $route->method;
                 $byMethod[$method] = ($byMethod[$method] ?? 0) + 1;
             }
 

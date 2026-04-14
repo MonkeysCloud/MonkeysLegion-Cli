@@ -6,8 +6,9 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
+use MonkeysLegion\Router\ControllerScanner;
 use MonkeysLegion\Router\Router;
-use MonkeysLegion\Core\Routing\RouteLoader;
+use PhpParser\Node\Expr\Cast\Object_;
 
 /**
  * CLI command for listing all registered routes.
@@ -22,16 +23,17 @@ final class RouteListCommand extends Command
 {
     public function __construct(
         private Router $router,
-        private RouteLoader $loader
+        private ControllerScanner $scanner,
     ) {
         parent::__construct();
     }
 
     protected function handle(): int
     {
-        // Ensure routes are loaded
-        $this->loader->loadControllers();
-
+        $this->scanner->scan(
+            base_path('/app/Controller'),
+            'App\\Controller'
+        );
         $routes = $this->router->getRoutes()->all();
 
         // Parse filters from args
@@ -61,11 +63,11 @@ final class RouteListCommand extends Command
 
         // Print routes
         foreach ($routes as $route) {
-            $method = $route['method'];
-            $path = $this->truncate($route['path'], $pathWidth - 2);
+            $method = $route->method;
+            $path = $this->truncate($route->path, $pathWidth - 2);
 
             // Get handler info
-            $handler = $route['handler'] ?? null;
+            $handler = $route->handler;
             $handlerStr = '-';
             if (is_array($handler)) {
                 $class = is_object($handler[0]) ? get_class($handler[0]) : (string)$handler[0];
@@ -124,11 +126,11 @@ final class RouteListCommand extends Command
     private function filterRoutes(array $routes, array $filters): array
     {
         return array_filter($routes, function ($route) use ($filters) {
-            if ($filters['method'] && ($route['method'] ?? '') !== $filters['method']) {
+            if ($filters['method'] && ($route->method) !== $filters['method']) {
                 return false;
             }
 
-            if ($filters['path'] && !str_contains($route['path'] ?? '', $filters['path'])) {
+            if ($filters['path'] && !str_contains($route->path, $filters['path'])) {
                 return false;
             }
 

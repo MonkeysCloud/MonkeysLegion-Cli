@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Command;
-use MonkeysLegion\Http\OpenApi\OpenApiGenerator;
+use MonkeysLegion\OpenApi\OpenApiGenerator;
 
 /**
  * Export the OpenAPI JSON spec.

@@ -15,7 +15,8 @@
     "monkeyscloud/monkeyslegion-di": "^1.0",
     "monkeyscloud/monkeyslegion-entity": "^1.0",
     "doctrine/inflector": "^2.0",
-    "monkeyscloud/monkeyslegion-migration": "^1.0"
+    "monkeyscloud/monkeyslegion-migration": "^1.0",
+    "monkeyscloud/monkeyslegion-openapi": "^1.0"
   },
   "autoload": {
     "psr-4": {
