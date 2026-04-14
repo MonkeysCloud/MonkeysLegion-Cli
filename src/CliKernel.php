@@ -7,6 +7,7 @@ namespace MonkeysLegion\Cli;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Cli\Console\Traits\Cli;
+use MonkeysLegion\Core\Error\Renderer\PlainTextErrorRenderer;
 use Psr\Container\ContainerInterface;
 use ReflectionClass;
 use ReflectionException;
@@ -31,17 +32,37 @@ final class CliKernel
     /** @var array<string> Errors encountered during command loading */
     private array $loadingErrors = [];
 
+    /** Boot/discovery cache (per PHP process/request lifecycle) */
+    private static bool $booted = false;
+    /** @var array<string, class-string<Command>> */
+    private static array $cachedMap = [];
+    /** @var array<string, array<string, class-string<Command>>> */
+    private static array $cachedGroupedCommands = [];
+    /** @var array<string> */
+    private static array $cachedLoadingErrors = [];
+
+    /** Prevent nested run() re-entry (infinite recursion guard) */
+    private bool $isRunning = false;
+
     /**
      * CliKernel constructor.
      *
      * @param ContainerInterface $container Dependency injection container
      * @param iterable<class-string<Command>> $commands Explicitly passed command classes
+     * @param bool $debug Enable debug mode for detailed error output
      * @throws ReflectionException
      */
     public function __construct(
         private ContainerInterface $container,
-        iterable $commands = [],
+        iterable $commands = []
     ) {
+        if (self::$booted) {
+            $this->map = self::$cachedMap;
+            $this->groupedCommands = self::$cachedGroupedCommands;
+            $this->loadingErrors = self::$cachedLoadingErrors;
+            return;
+        }
+
         // 1. Register commands that were passed explicitly (from CommandFinder)
         try {
             foreach ($commands as $class) {
@@ -125,6 +146,11 @@ final class CliKernel
         if (!empty($this->loadingErrors)) {
             $this->displayLoadingErrors();
         }
+
+        self::$cachedMap = $this->map;
+        self::$cachedGroupedCommands = $this->groupedCommands;
+        self::$cachedLoadingErrors = $this->loadingErrors;
+        self::$booted = true;
     }
 
     /**
@@ -196,48 +222,53 @@ final class CliKernel
      */
     public function run(array $argv): int
     {
-        $sig = $argv[1] ?? 'list';
-
-        if ($sig === 'list' || $sig === 'help') {
-            $this->displayCommandList();
-            return 0;
-        }
-
-        // Check if user is asking for a specific prefix group
-        if (str_ends_with($sig, ':') && isset($this->groupedCommands[rtrim($sig, ':')])) {
-            $this->displayPrefixCommands(rtrim($sig, ':'));
-            return 0;
-        }
-
-        if (! isset($this->map[$sig])) {
+        if ($this->isRunning) {
             $this->cliLine()
-                ->add("Command '", 'red')
-                ->add($sig, 'yellow', 'bold')
-                ->add("' not found.", 'red')
+                ->add('❌ Nested CLI execution detected. Aborting to prevent infinite recursion.', 'red', 'bold')
                 ->printError();
 
-            $this->suggestSimilarCommands($sig);
             return 1;
         }
+
+        $this->isRunning = true;
 
         try {
-            /** @var Command $command */
-            $command = $this->container->get($this->map[$sig]);
-            return $command();
-        } catch (\Throwable $e) {
-            $this->cliLine()
-                ->add('❌ Error executing command: ', 'red', 'bold')
-                ->add($e->getMessage(), 'white')
-                ->printError();
+            $sig = $argv[1] ?? 'list';
 
-            if (getenv('APP_DEBUG') === 'true') {
-                $this->cliLine()
-                    ->add('Stack trace:', 'gray')
-                    ->printError();
-                fwrite(STDERR, $e->getTraceAsString() . "\n");
+            if ($sig === 'list' || $sig === 'help') {
+                $this->displayCommandList();
+                return 0;
             }
 
-            return 1;
+            // Check if user is asking for a specific prefix group
+            if (str_ends_with($sig, ':') && isset($this->groupedCommands[rtrim($sig, ':')])) {
+                $this->displayPrefixCommands(rtrim($sig, ':'));
+                return 0;
+            }
+
+            if (! isset($this->map[$sig])) {
+                $this->cliLine()
+                    ->add("Command '", 'red')
+                    ->add($sig, 'yellow', 'bold')
+                    ->add("' not found.", 'red')
+                    ->printError();
+
+                $this->suggestSimilarCommands($sig);
+                return 1;
+            }
+
+            try {
+                /** @var Command $command */
+                $command = $this->container->get($this->map[$sig]);
+                return $command();
+            } catch (\Throwable $e) {
+                $debug = (bool) getenv('APP_DEBUG');
+                $errorHandler = new PlainTextErrorRenderer();
+                $this->printColored($errorHandler->render($e, $debug));
+                return 1;
+            }
+        } finally {
+            $this->isRunning = false;
         }
     }
 

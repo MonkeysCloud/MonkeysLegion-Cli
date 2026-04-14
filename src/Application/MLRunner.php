@@ -16,9 +16,14 @@ class MLRunner
     /**
      * Initialize the static runner with the Kernel instance.
      * Usually called once in your bootstrap or service provider.
+     * Subsequent calls are ignored to keep boot idempotent.
      */
     public static function boot(CliKernel $kernel): void
     {
+        if (self::$kernel !== null) {
+            return;
+        }
+
         self::$kernel = $kernel;
     }
 
