@@ -1,18 +1,19 @@
 <?php
+declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Config;
 
-enum RelationKind: string
+/**
+ * MonkeysLegion Framework — CLI Package
+ *
+ * Maps RelationKind enum values to their attribute class names.
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
+ */
+final class RelationKeywordMap
 {
-    case ONE_TO_ONE   = 'oneToOne';
-    case ONE_TO_MANY  = 'oneToMany';
-    case MANY_TO_ONE  = 'manyToOne';
-    case MANY_TO_MANY = 'manyToMany';
-}
-
-class RelationKeywordMap
-{
-    /** @var array<string, string> Map enum values to attribute names */
+    /** @var array<string, string> */
     private array $map = [
         RelationKind::ONE_TO_ONE->value   => 'OneToOne',
         RelationKind::ONE_TO_MANY->value  => 'OneToMany',
@@ -21,8 +22,6 @@ class RelationKeywordMap
     ];
 
     /**
-     * Returns a mapping of RelationKind cases to their attribute names.
-     *
      * @return array<string, string>
      */
     public function all(): array
