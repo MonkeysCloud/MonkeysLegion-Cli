@@ -22,19 +22,16 @@ use MonkeysLegion\Core\Routing\RouteLoader;
 final class RouteCacheCommand extends Command
 {
     public function __construct(
-        private RouteCache $cache,
-        private RouteCollection $routes,
-        private RouteLoader $loader
+        private readonly RouteCache $cache,
+        private readonly RouteCollection $routes,
+        private readonly RouteLoader $loader,
     ) {
         parent::__construct();
     }
 
     protected function handle(): int
     {
-        $argv = $_SERVER['argv'] ?? [];
-        $action = (is_array($argv) && isset($argv[2]) && is_string($argv[2]))
-            ? $argv[2]
-            : 'cache';
+        $action = $this->argument(0) ?? 'cache';
 
         return match ($action) {
             'clear' => $this->clearCache(),

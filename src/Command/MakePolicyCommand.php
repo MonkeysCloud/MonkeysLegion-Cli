@@ -6,62 +6,83 @@ namespace MonkeysLegion\Cli\Command;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 
-#[CommandAttr('make:policy', 'Generate a new Policy class stub')]
+/**
+ * MonkeysLegion Framework — CLI Package
+ *
+ * Generate an authorization policy class with CRUD methods.
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
+ */
+#[CommandAttr('make:policy', 'Generate an authorization policy class')]
 final class MakePolicyCommand extends Command
 {
     use MakerHelpers;
 
-    public function handle(): int
+    protected function handle(): int
     {
-        $argv = is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [];
-        $input = isset($argv[2]) && is_string($argv[2]) ? $argv[2] : $this->ask('Enter policy name (e.g. User)');
-        $name  = preg_replace('/Policy$/', '', $input) . 'Policy';
+        $input = $this->argument(0) ?? $this->ask('Policy name (e.g., User):');
+        $name  = $this->ensureSuffix($this->toPascalCase($input), 'Policy');
 
         if (!preg_match('/^[A-Z][A-Za-z0-9]+Policy$/', $name)) {
-            return $this->fail('Invalid name: must be CamelCase ending with "Policy".');
+            $this->error('Invalid name — must be PascalCase ending with "Policy".');
+
+            return self::FAILURE;
         }
 
-        $dir  = base_path('app/Policy');
-        $file = "{$dir}/{$name}.php";
-        @mkdir($dir, 0755, true);
+        $entity = $this->removeSuffix($name, 'Policy');
+        $dir    = function_exists('base_path') ? base_path('app/Policy') : 'app/Policy';
+        $file   = "{$dir}/{$name}.php";
 
-        if (file_exists($file)) {
-            $this->line("ℹ️  Policy already exists: {$file}");
+        if (!is_dir($dir)) {
+            mkdir($dir, 0o755, true);
+        }
+
+        if (is_file($file)) {
+            $this->comment("Policy already exists: {$file}");
+
             return self::SUCCESS;
         }
 
         $stub = <<<PHP
-<?php
-declare(strict_types=1);
+            <?php
+            declare(strict_types=1);
 
-namespace App\Policy;
+            namespace App\\Policy;
 
-final class {$name}
-{
-    public function view(\$user, \$model): bool
-    {
-        // TODO: implement view logic
-    }
+            use App\\Entity\\{$entity};
 
-    public function create(\$user): bool
-    {
-        // TODO: implement create logic
-    }
+            final class {$name}
+            {
+                public function view(mixed \$user, {$entity} \$model): bool
+                {
+                    // TODO: implement view authorization
+                    return true;
+                }
 
-    public function update(\$user, \$model): bool
-    {
-        // TODO: implement update logic
-    }
+                public function create(mixed \$user): bool
+                {
+                    // TODO: implement create authorization
+                    return true;
+                }
 
-    public function delete(\$user, \$model): bool
-    {
-        // TODO: implement delete logic
-    }
-}
-PHP;
+                public function update(mixed \$user, {$entity} \$model): bool
+                {
+                    // TODO: implement update authorization
+                    return true;
+                }
+
+                public function delete(mixed \$user, {$entity} \$model): bool
+                {
+                    // TODO: implement delete authorization
+                    return false;
+                }
+            }
+            PHP;
 
         file_put_contents($file, $stub);
-        $this->info("✅  Created policy: {$file}");
+        $this->info("✅ Created policy: {$file}");
+
         return self::SUCCESS;
     }
 }

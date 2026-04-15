@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -8,51 +7,76 @@ use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Database\Contracts\ConnectionInterface;
 
-#[CommandAttr(
-    'db:seed',
-    'Run database seeders (optionally specify one)'
-)]
+/**
+ * MonkeysLegion Framework — CLI Package
+ *
+ * Run database seeders.
+ *
+ * Usage:
+ *   php ml db:seed              # run all seeders
+ *   php ml db:seed UsersSeeder  # run specific seeder
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
+ */
+#[CommandAttr('db:seed', 'Run database seeders')]
 final class SeedCommand extends Command
 {
-    public function __construct(private ConnectionInterface $db)
-    {
+    public function __construct(
+        private readonly ConnectionInterface $db,
+    ) {
         parent::__construct();
     }
 
-    public function handle(): int
+    protected function handle(): int
     {
-        $argv = (array)($_SERVER['argv'] ?? []);
-        $target = $argv[2] ?? null;
-        if (!is_string($target) || $target === '') {
-            $this->line('No seeder specified.');
-            return self::FAILURE;
-        }
-        $path   = base_path('database/seeders');
-        $files  = glob("{$path}/*Seeder.php");
+        $target = $this->argument(0);
+        $path   = function_exists('base_path') ? base_path('database/seeders') : 'database/seeders';
+        $files  = glob("{$path}/*Seeder.php") ?: [];
 
-        if (! $files) {
-            $this->error("No seeders found in {$path}");
+        if ($files === []) {
+            $this->warn("No seeders found in {$path}");
+
             return self::FAILURE;
         }
+
+        $ran = 0;
 
         foreach ($files as $file) {
             $classFile = basename($file, '.php');
-            if ($target && stripos($classFile, $target) === false) {
+
+            // Filter by target if specified
+            if (is_string($target) && $target !== '' && stripos($classFile, $target) === false) {
                 continue;
             }
 
-            // load and run
             require_once $file;
+
             $fqcn = "App\\Database\\Seeders\\{$classFile}";
-            if (! class_exists($fqcn)) {
-                $this->error("Class {$fqcn} not found");
+
+            if (!class_exists($fqcn)) {
+                $this->error("Class {$fqcn} not found in {$file}");
+
                 continue;
             }
-            $this->line("➤ Running {$classFile}...");
-            (new $fqcn)->run($this->db); //TODO: define an abstract Seeder class for static type safety
+
+            $this->cliLine()
+                ->add('  ➤ ', 'cyan')
+                ->add("Running {$classFile}...", 'white')
+                ->print();
+
+            (new $fqcn())->run($this->db);
+            $ran++;
         }
 
-        $this->info('✅  Seeders complete.');
+        if ($ran === 0) {
+            $this->warn('No matching seeders were executed.');
+
+            return self::FAILURE;
+        }
+
+        $this->info("✅ {$ran} seeder(s) complete.");
+
         return self::SUCCESS;
     }
 }

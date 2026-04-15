@@ -21,8 +21,8 @@ use MonkeysLegion\Core\Routing\RouteLoader;
 final class RouteListCommand extends Command
 {
     public function __construct(
-        private Router $router,
-        private RouteLoader $loader
+        private readonly Router $router,
+        private readonly RouteLoader $loader,
     ) {
         parent::__construct();
     }
@@ -34,10 +34,13 @@ final class RouteListCommand extends Command
 
         $routes = $this->router->getRoutes()->all();
 
-        // Parse filters from args
-        $argv = $_SERVER['argv'] ?? [];
-        $args = array_slice($argv, 2);
-        $filters = $this->parseFilters($args);
+        // Parse filters
+        $methodFilter = $this->option('method');
+        $pathFilter   = $this->option('path');
+        $filters = [
+            'method' => is_string($methodFilter) ? strtoupper($methodFilter) : null,
+            'path'   => is_string($pathFilter) ? $pathFilter : null,
+        ];
 
         // Apply filters
         $routes = $this->filterRoutes($routes, $filters);
