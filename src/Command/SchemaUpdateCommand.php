@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -8,396 +7,205 @@ use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Database\Contracts\ConnectionInterface;
 use MonkeysLegion\Entity\Scanner\EntityScanner;
+use MonkeysLegion\Migration\Diff\DiffPlan;
 use MonkeysLegion\Migration\MigrationGenerator;
-use ReflectionException;
 
+/**
+ * MonkeysLegion Framework — CLI Package
+ *
+ * Compare entity metadata → database schema and apply changes.
+ * Delegates entirely to the migration v2 package components.
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
+ */
 #[CommandAttr(
     'schema:update',
-    'Compare entities → database and apply missing tables/columns (use --dump or --force)'
+    'Compare entities → database and apply missing tables/columns',
+    aliases: ['su'],
 )]
 final class SchemaUpdateCommand extends Command
 {
     public function __construct(
-        private ConnectionInterface $db,
-        private EntityScanner $scanner,
-        private MigrationGenerator $generator
+        private readonly ConnectionInterface $db,
+        private readonly EntityScanner $scanner,
+        private readonly MigrationGenerator $generator,
     ) {
         parent::__construct();
     }
 
-    /**
-     * Handle the command.
-     *
-     * @return int
-     * @throws ReflectionException
-     */
-    public function handle(): int
+    protected function handle(): int
     {
-        $args = (array) ($_SERVER['argv'] ?? []);
-        $dump  = in_array('--dump', $args, true);
-        $force = in_array('--force', $args, true);
+        $dump    = $this->hasOption('dump');
+        $force   = $this->hasOption('force');
+        $pretend = $this->hasOption('pretend');
 
-        // Check if database exists first
+        // ── Check database ───────────────────────────────────────
         if (!$this->checkDatabaseExists()) {
-            $response = $this->ask('Database does not exist. Create it? (y/N)');
-            if (strtolower(trim($response)) !== 'y' && strtolower(trim($response)) !== 'yes') {
+            if (!$this->confirm('Database does not exist. Create it?')) {
                 $this->error('Aborted. Database creation declined.');
+
                 return self::FAILURE;
             }
 
-            if (!$this->createDatabase()) {
-                $this->error('Failed to create database.');
-                return self::FAILURE;
-            }
+            $this->error('Please run db:create first.');
+
+            return self::FAILURE;
         }
 
-        // 1) Scan your Entity classes directory
-        $this->line('🔍 Scanning entities…');
-        $entities = $this->scanner->scanDir(base_path('app/Entity')); // ← use scanDir()
+        // ── Scan entities ────────────────────────────────────────
+        $this->info('🔍 Scanning entities…');
 
-        // 2) Read current DB schema
-        $this->line('🔍 Reading current database schema…');
-        $schema = $this->introspectSchema();
+        $entityDir = function_exists('base_path') ? base_path('app/Entity') : 'app/Entity';
+        $entityMetadata = $this->scanner->scanDir($entityDir);
 
-        // 3) Compute diff
-        $sql = trim($this->generator->diff($entities, $schema));
-        if ($sql === '') {
-            $this->info('✔️  Schema is already up to date.');
+        if ($entityMetadata === []) {
+            $this->warn('No entities found in: ' . $entityDir);
+
             return self::SUCCESS;
         }
 
-        // 4) Dump if requested
+        $this->comment('  Found ' . count($entityMetadata) . ' entities');
+
+        // Convert EntityMetadata → class-strings for MigrationGenerator
+        $entities = array_map(
+            static fn($meta) => $meta->className,
+            $entityMetadata,
+        );
+
+        // ── Compute diff ─────────────────────────────────────────
+        $this->info('🔍 Computing schema diff…');
+
+        $plan = $this->generator->computeDiff($entities);
+
+        if ($plan->isEmpty()) {
+            $this->info('✔️  Schema is already up to date.');
+
+            return self::SUCCESS;
+        }
+
+        // ── Pretend mode — human-readable table ──────────────────
+        if ($pretend) {
+            $this->newLine();
+            $this->alert("Schema changes detected ({$plan->changeCount()} changes)");
+            $this->newLine();
+            $this->line($plan->toHumanReadable());
+
+            return self::SUCCESS;
+        }
+
+        // ── Generate SQL ─────────────────────────────────────────
+        $sql = $this->generator->getRenderer()->render($plan);
+
+        // ── Dump mode — show SQL ─────────────────────────────────
         if ($dump) {
-            $this->line("\n-- Generated SQL:\n" . $sql . "\n");
+            $this->newLine();
+            $this->line("-- Generated SQL ({$plan->changeCount()} changes):");
+            $this->newLine();
+            $this->line($sql);
+
+            return self::SUCCESS;
         }
 
-        // 5) Apply if forced
+        // ── Force mode — apply with backup ───────────────────────
         if ($force) {
-            $pdo = $this->db->pdo();
-
-            try {
-                // split on “;” followed by newline / EOF
-                $stmts = preg_split('/;\\s*(?=\\R|$)/', trim($sql)) ?: [];
-                foreach ($stmts as $stmt) {
-                    $stmt = trim($stmt);
-                    if ($stmt === '') {
-                        continue;
-                    }
-                    try {
-                        $pdo->exec($stmt);
-                    } catch (\PDOException $e) {
-                        // ignore "already exists" / duplicate-column errors
-                        // MySQL: 42S21 (dup column), 42S01 (dup table)
-                        // PostgreSQL: 42P07 (dup table), 42701 (dup column)
-                        if (in_array($e->getCode(), ['42S21', '42S01', '42P07', '42701'], true)) {
-                            $this->line('Skipped: ' . substr($stmt, 0, 50) . '…');
-                            continue;
-                        }
-
-                        // PostgreSQL 2BP01: dependent objects still exist
-                        // Retry DROP statements with CASCADE; other statements are fatal
-                        if ($e->getCode() === '2BP01') {
-                            if (preg_match('/^\s*DROP\s/i', $stmt)) {
-                                $cascadeStmt = rtrim($stmt) . ' CASCADE';
-                                $pdo->exec($cascadeStmt);
-                                $this->line('Retried with CASCADE: ' . substr($stmt, 0, 50) . '…');
-                                continue;
-                            }
-                            // Non-DROP 2BP01 → surface the error so ordering can be fixed
-                        }
-
-                        throw $e;   // anything else is fatal
-                    }
-                }
-
-                $this->info('✅  Schema updated successfully.');
-            } catch (\PDOException $e) {
-                // only roll back if a txn is still open (unlikely with DDL)
-                if ($pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
-                $this->error('❌  Failed: ' . $e->getMessage());
-                return self::FAILURE;
-            }
-        } elseif (! $dump) {
-            $this->info('ℹ️  No action taken. Use --dump to preview or --force to apply.');
+            return $this->applyChanges($sql, $plan);
         }
+
+        $this->info('ℹ️  Use --dump to preview SQL, --pretend for human-readable diff, or --force to apply.');
 
         return self::SUCCESS;
     }
 
-    /**
-     * Introspect the database schema into an array:
-     *  [ tableName => [ columnName => columnInfoArray, … ], … ]
-     *
-     * Returns the same structure for both MySQL and PostgreSQL so that
-     * MigrationGenerator::diff() can consume it identically.
-     *
-     * @return array<string, array<string, array<string, mixed>>>
-     */
-    private function introspectSchema(): array
+    // ── Apply changes ─────────────────────────────────────────────
+
+    private function applyChanges(string $sql, DiffPlan $plan): int
     {
-        $pdo    = $this->db->pdo();
-        $driver = $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
+        // Backup current schema
+        $this->info('💾 Creating schema backup…');
 
-        if ($driver === 'pgsql') {
-            return $this->introspectPgsql($pdo);
-        }
+        try {
+            $backupSql = $this->generator->backup();
+            $backupDir = function_exists('base_path') ? base_path('storage/migrations') : 'storage/migrations';
 
-        return $this->introspectMysql($pdo);
-    }
-
-    /**
-     * MySQL introspection via SHOW TABLES / SHOW COLUMNS.
-     *
-     * @return array<string, array<string, array<string, mixed>>>
-     */
-    private function introspectMysql(\PDO $pdo): array
-    {
-        $tablesStmt = $this->safeQuery($pdo, "SHOW TABLES");
-        /** @var list<string> $tables */
-        $tables = $tablesStmt->fetchAll(\PDO::FETCH_COLUMN);
-
-        $schema = [];
-        foreach ($tables as $table) {
-            $colsStmt = $this->safeQuery($pdo, "SHOW COLUMNS FROM `{$table}`");
-            /** @var list<array<string, mixed>> $cols */
-            $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
-
-            $schema[$table] = [];
-            foreach ($cols as $col) {
-                if (!isset($col['Field']) || !is_string($col['Field'])) {
-                    throw new \RuntimeException("Invalid column definition in table '{$table}'");
-                }
-                $schema[$table][$col['Field']] = $col;
+            if (!is_dir($backupDir)) {
+                mkdir($backupDir, 0o755, true);
             }
+
+            $backupFile = $backupDir . '/backup_' . date('Y_m_d_His') . '.sql';
+            file_put_contents($backupFile, $backupSql);
+            $this->comment("  Saved to: {$backupFile}");
+        } catch (\Throwable $e) {
+            $this->warn('⚠️  Backup failed: ' . $e->getMessage());
+            $this->warn('  Continuing without backup…');
         }
-        return $schema;
-    }
 
-    /**
-     * PostgreSQL introspection via pg_tables / information_schema.columns.
-     *
-     * Column rows are aliased to the same keys that MySQL returns
-     * (Field, Type, Null, Default, Extra) so the diff layer receives a
-     * uniform structure.
-     *
-     * @return array<string, array<string, array<string, mixed>>>
-     */
-    private function introspectPgsql(\PDO $pdo): array
-    {
-        // Resolve the active schema from search_path rather than hardcoding 'public'
-        $schemaStmt = $pdo->query('SELECT current_schema()');
-        $pgSchema   = $schemaStmt !== false ? ($schemaStmt->fetchColumn() ?: 'public') : 'public';
+        // Apply
+        $this->info('🚀 Applying schema changes…');
 
-        $tablesStmt = $pdo->prepare(
-            'SELECT tablename FROM pg_tables WHERE schemaname = :schema'
+        $pdo   = $this->db->pdo();
+        $stmts = $this->generator->getRenderer()->renderStatements($plan);
+        $total = count($stmts);
+
+        $this->progressStart($total, 'Applying');
+
+        $applied = 0;
+        $skipped = 0;
+
+        foreach ($stmts as $stmt) {
+            $stmt = trim($stmt);
+
+            if ($stmt === '') {
+                $this->progressAdvance();
+                continue;
+            }
+
+            try {
+                $pdo->exec($stmt);
+                $applied++;
+            } catch (\PDOException $e) {
+                // Ignore duplicate table/column errors
+                if (in_array($e->getCode(), ['42S21', '42S01', '42P07', '42701'], true)) {
+                    $skipped++;
+                } else {
+                    $this->progressFinish();
+                    $this->error("❌ Failed: {$e->getMessage()}");
+                    $this->comment("  Statement: " . mb_substr($stmt, 0, 80) . '…');
+
+                    return self::FAILURE;
+                }
+            }
+
+            $this->progressAdvance();
+        }
+
+        $this->progressFinish();
+        $this->newLine();
+
+        // Summary table
+        $this->table(
+            ['Metric', 'Count'],
+            [
+                ['Applied statements', (string) $applied],
+                ['Skipped (already exist)', (string) $skipped],
+                ['Total changes', (string) $plan->changeCount()],
+            ],
         );
-        $tablesStmt->execute(['schema' => $pgSchema]);
-        /** @var list<string> $tables */
-        $tables = $tablesStmt->fetchAll(\PDO::FETCH_COLUMN);
 
-        $colSql = <<<'SQL'
-            SELECT column_name     AS "Field",
-                   data_type       AS "Type",
-                   is_nullable     AS "Null",
-                   column_default  AS "Default",
-                   CASE WHEN column_default LIKE 'nextval%%' THEN 'auto_increment' ELSE '' END AS "Extra"
-              FROM information_schema.columns
-             WHERE table_schema = :schema
-               AND table_name  = :table
-             ORDER BY ordinal_position
-        SQL;
+        $this->info('✅ Schema updated successfully.');
 
-        $colsStmt = $pdo->prepare($colSql);
-
-        $schema = [];
-        foreach ($tables as $table) {
-            $colsStmt->execute(['schema' => $pgSchema, 'table' => $table]);
-            /** @var list<array<string, mixed>> $cols */
-            $cols = $colsStmt->fetchAll(\PDO::FETCH_ASSOC);
-
-            $schema[$table] = [];
-            foreach ($cols as $col) {
-                if (!isset($col['Field']) || !is_string($col['Field'])) {
-                    throw new \RuntimeException("Invalid column definition in table '{$table}'");
-                }
-                $schema[$table][$col['Field']] = $col;
-            }
-        }
-        return $schema;
+        return self::SUCCESS;
     }
 
-    /**
-     * Check if the database exists by attempting to connect to it.
-     */
+    // ── Helpers ───────────────────────────────────────────────────
+
     private function checkDatabaseExists(): bool
     {
         try {
             $this->db->pdo();
+
             return true;
-        } catch (\PDOException $e) {
-            // Database doesn't exist or connection failed
-            return false;
-        }
-    }
-
-    /**
-     * Create the database using configuration from .env
-     */
-    private function createDatabase(): bool
-    {
-        /** 
-         * @var array{
-         *   default: string,
-         *   connections: array<string, array<string, mixed>>
-         * } $cfg
-         */
-        $cfg  = require base_path('config/database.php');
-        $conn = $cfg['connections'][$cfg['default']] ?? [];
-
-        $dsn = isset($conn['dsn']) && is_string($conn['dsn']) ? $conn['dsn'] : '';
-        $appUser = isset($conn['username']) && is_string($conn['username']) ? $conn['username'] : 'root';
-        $appPass = isset($conn['password']) && is_string($conn['password']) ? $conn['password'] : '';
-
-        if (str_starts_with($dsn, 'pgsql:')) {
-            return $this->createDatabasePgsql($dsn, $appUser, $appPass);
-        }
-
-        if (str_starts_with($dsn, 'mysql:')) {
-            return $this->createDatabaseMysql($dsn, $appUser, $appPass);
-        }
-
-        $this->error('Database creation skipped – unsupported driver.');
-        return false;
-    }
-
-    /**
-     * Create a PostgreSQL database via the 'postgres' maintenance DB.
-     */
-    private function createDatabasePgsql(string $dsn, string $appUser, string $appPass): bool
-    {
-        // Parse all DSN options so we preserve sslmode, options, etc.
-        $parts = [];
-        foreach (explode(';', substr($dsn, 6)) as $chunk) {
-            if ($chunk === '') continue;
-            [$k, $v] = array_map('trim', explode('=', $chunk, 2));
-            $parts[$k] = $v;
-        }
-        $db = $parts['dbname'] ?? 'app';
-
-        // Validate identifier: only word chars, digits, hyphens, dots allowed
-        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\-\.]*$/', $db)) {
-            $this->error("Invalid database name: '{$db}'");
-            return false;
-        }
-
-        // Rebuild DSN swapping dbname to 'postgres' while keeping every other option
-        $parts['dbname'] = 'postgres';
-        $maintenanceDsn  = 'pgsql:' . implode(';', array_map(
-            static fn(string $k, string $v): string => "{$k}={$v}",
-            array_keys($parts),
-            array_values($parts)
-        ));
-
-        try {
-            $pdo = new \PDO(
-                $maintenanceDsn,
-                $appUser,
-                $appPass,
-                [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]
-            );
-
-            // Check if database already exists
-            $stmt = $pdo->prepare("SELECT 1 FROM pg_database WHERE datname = :db");
-            $stmt->execute(['db' => $db]);
-
-            $created = false;
-            if (!$stmt->fetch()) {
-                // Safe: $db validated above against strict identifier regex
-                $quoted = '"' . str_replace('"', '""', $db) . '"';
-                $pdo->exec("CREATE DATABASE {$quoted} ENCODING 'UTF8'");
-                $created = true;
-            }
-
-            if ($created) {
-                $this->info("✔️  Database '{$db}' created successfully.");
-            } else {
-                $this->info("ℹ️  Database '{$db}' already exists, skipping creation.");
-            }
-            return true;
-        } catch (\PDOException $e) {
-            $this->error("Failed to create database: {$e->getMessage()}");
-            return false;
-        }
-    }
-
-    /**
-     * Create a MySQL database (original logic preserved).
-     */
-    private function createDatabaseMysql(string $dsn, string $appUser, string $appPass): bool
-    {
-        $parts = [];
-        foreach (explode(';', substr($dsn, 6)) as $chunk) {
-            if ($chunk === '') continue;
-            [$k, $v] = array_map('trim', explode('=', $chunk, 2));
-            $parts[$k] = $v;
-        }
-        $host = $parts['host'] ?? '127.0.0.1';
-        $port = $parts['port'] ?? 3306;
-        $db   = $parts['dbname'] ?? 'app';
-
-        $dsnTpl = 'mysql:host=%s;port=%s;charset=utf8mb4';
-
-        try {
-            $pdo = new \PDO(
-                sprintf($dsnTpl, $host, $port),
-                $appUser,
-                $appPass,
-                [
-                    \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
-                    \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-                ]
-            );
-
-            $pdo->exec(
-                sprintf(
-                    'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
-                    $db
-                )
-            );
-
-            $this->info("✔️  Database '{$db}' created successfully.");
-            return true;
-        } catch (\PDOException $e) {
-            if ($host !== '127.0.0.1') {
-                try {
-                    $pdo = new \PDO(
-                        sprintf($dsnTpl, '127.0.0.1', $port),
-                        $appUser,
-                        $appPass,
-                        [
-                            \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
-                            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-                        ]
-                    );
-
-                    $pdo->exec(
-                        sprintf(
-                            'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
-                            $db
-                        )
-                    );
-
-                    $this->info("✔️  Database '{$db}' created successfully.");
-                    return true;
-                } catch (\PDOException $retryE) {
-                    $this->error("Failed to create database: {$retryE->getMessage()}");
-                    return false;
-                }
-            }
-
-            $this->error("Failed to create database: {$e->getMessage()}");
+        } catch (\PDOException) {
             return false;
         }
     }
