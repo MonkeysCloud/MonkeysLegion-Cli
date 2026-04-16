@@ -321,23 +321,13 @@ final class CliLineBuilder
         return $this;
     }
 
-    /**
-     * Get the number of segments.
-     *
-     * @return int
-     */
-    public function count(): int
-    {
-        return count($this->segments);
+    /** Computed segment count via get hook. */
+    public int $count {
+        get => count($this->segments);
     }
 
-    /**
-     * Check if the builder is empty.
-     *
-     * @return bool
-     */
-    public function isEmpty(): bool
-    {
-        return empty($this->segments);
+    /** Computed emptiness check via get hook. */
+    public bool $isEmpty {
+        get => $this->segments === [];
     }
 }

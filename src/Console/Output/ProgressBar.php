@@ -7,6 +7,7 @@ namespace MonkeysLegion\Cli\Console\Output;
  * MonkeysLegion Framework — CLI Package
  *
  * Terminal progress bar with percentage, ETA, and items/sec display.
+ * Uses PHP 8.4 property hooks for validation and computed state.
  *
  * Format: [████████░░░░░░░░] 50% 5/10 ETA 0:03 (1.7/s)
  *
@@ -15,10 +16,29 @@ namespace MonkeysLegion\Cli\Console\Output;
  */
 final class ProgressBar
 {
-    private int $current = 0;
+    /** Current position — clamped to [0, total] via set hook. */
+    public private(set) int $current = 0 {
+        set(int $value) {
+            $this->current = max(0, min($value, $this->total));
+        }
+    }
+
+    /** Bar width — enforces minimum of 10 via set hook. */
+    public private(set) int $barWidth {
+        set(int $value) {
+            $this->barWidth = max(10, $value);
+        }
+    }
+
+    /** Computed percentage (0.0–1.0). */
+    public float $percent {
+        get => $this->total > 0 ? ($this->current / $this->total) : 1.0;
+    }
+
+    /** Whether the bar has been started. */
+    public private(set) bool $started = false;
+
     private float $startTime;
-    private int $barWidth;
-    private bool $started = false;
 
     /**
      * @param int    $total    Total items to process
@@ -30,7 +50,7 @@ final class ProgressBar
         int $barWidth = 30,
         private readonly string $label = '',
     ) {
-        $this->barWidth  = max(10, $barWidth);
+        $this->barWidth  = $barWidth; // triggers set hook
         $this->startTime = microtime(true);
     }
 
@@ -54,7 +74,7 @@ final class ProgressBar
             $this->start();
         }
 
-        $this->current = min($this->current + $steps, $this->total);
+        $this->current = $this->current + $steps; // set hook clamps
         $this->draw();
     }
 
@@ -63,7 +83,7 @@ final class ProgressBar
      */
     public function setProgress(int $current): void
     {
-        $this->current = min(max(0, $current), $this->total);
+        $this->current = $current; // set hook clamps
         $this->draw();
     }
 
@@ -81,7 +101,7 @@ final class ProgressBar
 
     private function draw(): void
     {
-        $percent  = $this->total > 0 ? ($this->current / $this->total) : 1.0;
+        $percent  = $this->percent;
         $filled   = (int) round($percent * $this->barWidth);
         $empty    = $this->barWidth - $filled;
 

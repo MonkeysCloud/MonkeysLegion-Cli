@@ -17,8 +17,8 @@ final class CliLineBuilderTest extends TestCase
     public function testEmptyBuilder(): void
     {
         $builder = new CliLineBuilder();
-        $this->assertTrue($builder->isEmpty());
-        $this->assertSame(0, $builder->count());
+        $this->assertTrue($builder->isEmpty);
+        $this->assertSame(0, $builder->count);
         $this->assertSame('', $builder->build());
     }
 
@@ -131,7 +131,7 @@ final class CliLineBuilderTest extends TestCase
             ->add('B ', 'green')
             ->add('C', 'blue');
 
-        $this->assertSame(3, $builder->count());
+        $this->assertSame(3, $builder->count);
         $plain = $builder->toPlainText();
         $this->assertSame('A B C', $plain);
     }
@@ -153,11 +153,11 @@ final class CliLineBuilderTest extends TestCase
         $builder = (new CliLineBuilder())
             ->add('X', 'red');
 
-        $this->assertSame(1, $builder->count());
+        $this->assertSame(1, $builder->count);
 
         $builder->clear();
-        $this->assertSame(0, $builder->count());
-        $this->assertTrue($builder->isEmpty());
+        $this->assertSame(0, $builder->count);
+        $this->assertTrue($builder->isEmpty);
     }
 
     // ── Unknown color falls back to white ─────────────────────────

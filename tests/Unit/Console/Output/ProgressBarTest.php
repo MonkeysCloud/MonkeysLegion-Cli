@@ -15,70 +15,101 @@ final class ProgressBarTest extends TestCase
     {
         $bar = new ProgressBar(100);
         $this->assertInstanceOf(ProgressBar::class, $bar);
+        $this->assertSame(0, $bar->current);
+        $this->assertFalse($bar->started);
     }
 
     public function testConstructWithLabel(): void
     {
         $bar = new ProgressBar(50, label: 'Loading');
-        $this->assertInstanceOf(ProgressBar::class, $bar);
+        $this->assertSame(0, $bar->current);
     }
 
-    public function testConstructWithCustomWidth(): void
+    public function testBarWidthClampedToMinimum(): void
+    {
+        // barWidth set hook enforces min 10
+        $bar = new ProgressBar(50, barWidth: 3);
+        $this->assertSame(10, $bar->barWidth);
+    }
+
+    public function testBarWidthAcceptsValid(): void
     {
         $bar = new ProgressBar(50, barWidth: 40);
-        $this->assertInstanceOf(ProgressBar::class, $bar);
+        $this->assertSame(40, $bar->barWidth);
     }
 
-    public function testMinimumBarWidth(): void
-    {
-        // Width < 10 should be clamped to 10
-        $bar = new ProgressBar(50, barWidth: 3);
-        $this->assertInstanceOf(ProgressBar::class, $bar);
-    }
-
-    public function testStartDoesNotThrow(): void
+    public function testStartSetsStarted(): void
     {
         $bar = new ProgressBar(10);
         $bar->start();
-        $this->assertTrue(true);
+        $this->assertTrue($bar->started);
+        $this->assertSame(0, $bar->current);
     }
 
-    public function testAdvanceDoesNotThrow(): void
+    public function testAdvanceClampsCurrent(): void
     {
         $bar = new ProgressBar(10);
         $bar->start();
         $bar->advance(3);
-        $this->assertTrue(true);
+        $this->assertSame(3, $bar->current);
+
+        // Advance past total — clamped by set hook
+        $bar->advance(100);
+        $this->assertSame(10, $bar->current);
     }
 
-    public function testAdvanceWithoutStartDoesNotThrow(): void
+    public function testAdvanceAutoStarts(): void
     {
         $bar = new ProgressBar(10);
-        $bar->advance(); // auto-starts
-        $this->assertTrue(true);
+        $this->assertFalse($bar->started);
+        $bar->advance();
+        $this->assertTrue($bar->started);
+        $this->assertSame(1, $bar->current);
     }
 
-    public function testSetProgressDoesNotThrow(): void
+    public function testSetProgressClampsValue(): void
     {
         $bar = new ProgressBar(10);
         $bar->start();
         $bar->setProgress(5);
-        $this->assertTrue(true);
+        $this->assertSame(5, $bar->current);
+
+        // Negative — clamped to 0 by set hook
+        $bar->setProgress(-5);
+        $this->assertSame(0, $bar->current);
+
+        // Over total — clamped by set hook
+        $bar->setProgress(999);
+        $this->assertSame(10, $bar->current);
     }
 
-    public function testFinishDoesNotThrow(): void
+    public function testPercentIsComputed(): void
     {
         $bar = new ProgressBar(10);
         $bar->start();
-        $bar->advance(10);
-        $bar->finish();
-        $this->assertTrue(true);
+        $this->assertEqualsWithDelta(0.0, $bar->percent, 0.001);
+
+        $bar->advance(5);
+        $this->assertEqualsWithDelta(0.5, $bar->percent, 0.001);
+
+        $bar->advance(5);
+        $this->assertEqualsWithDelta(1.0, $bar->percent, 0.001);
     }
 
-    public function testZeroTotal(): void
+    public function testFinishSetsFull(): void
+    {
+        $bar = new ProgressBar(10);
+        $bar->start();
+        $bar->finish();
+        $this->assertSame(10, $bar->current);
+        $this->assertEqualsWithDelta(1.0, $bar->percent, 0.001);
+    }
+
+    public function testZeroTotalPercentIsOne(): void
     {
         $bar = new ProgressBar(0);
         $bar->start();
+        $this->assertEqualsWithDelta(1.0, $bar->percent, 0.001);
         $bar->finish();
         $this->assertTrue(true);
     }
