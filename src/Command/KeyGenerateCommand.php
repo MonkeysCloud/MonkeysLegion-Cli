@@ -44,7 +44,7 @@ final class KeyGenerateCommand extends Command
 
         file_put_contents($envFile, $content);
 
-        $this->info("✅ APP_KEY set: {$key}");
+        $this->info("✅ APP_KEY updated in: {$envFile}");
 
         return self::SUCCESS;
     }

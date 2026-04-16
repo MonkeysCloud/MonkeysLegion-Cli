@@ -22,7 +22,7 @@ final class OptimizeCommand extends Command
 
         $tasks = [
             'Caching config'  => fn() => $this->runSub('config:cache'),
-            'Caching routes'  => fn() => $this->runSub('route:cache'),
+            'Clearing cache'  => fn() => $this->runSub('cache:clear'),
             'Clearing stale'  => fn() => $this->clearStaleCache(),
         ];
 
@@ -49,11 +49,11 @@ final class OptimizeCommand extends Command
 
     private function runSub(string $signature): void
     {
-        // Simulate sub-command by running it inline
-        // In production, CliKernel would route these
-        if ($signature === 'config:cache') {
-            (new ConfigCacheCommand())->__invoke();
-        }
+        match ($signature) {
+            'config:cache' => (new ConfigCacheCommand())->__invoke(),
+            'cache:clear'  => (new ClearCacheCommand())->__invoke(),
+            default        => throw new \RuntimeException("Sub-command '{$signature}' not implemented."),
+        };
     }
 
     private function clearStaleCache(): void

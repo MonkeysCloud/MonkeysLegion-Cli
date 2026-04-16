@@ -31,7 +31,6 @@ final class MakeMigrationCommand extends Command
         $name     = preg_replace('/[^a-zA-Z0-9_]/', '_', $name) ?? $name;
         $name     = strtolower(trim($name, '_'));
         $timestamp = date('Y_m_d_His');
-        $className = 'M' . str_replace('_', '', $timestamp) . '_' . $this->toPascalCase($name);
         $fileName  = "M{$timestamp}_{$name}.php";
 
         $dir = $this->option('path');
@@ -80,10 +79,5 @@ final class MakeMigrationCommand extends Command
         $this->comment("  Path: {$filePath}");
 
         return self::SUCCESS;
-    }
-
-    private function toPascalCase(string $str): string
-    {
-        return str_replace(' ', '', ucwords(str_replace('_', ' ', $str)));
     }
 }

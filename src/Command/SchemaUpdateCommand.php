@@ -42,13 +42,7 @@ final class SchemaUpdateCommand extends Command
 
         // ── Check database ───────────────────────────────────────
         if (!$this->checkDatabaseExists()) {
-            if (!$this->confirm('Database does not exist. Create it?')) {
-                $this->error('Aborted. Database creation declined.');
-
-                return self::FAILURE;
-            }
-
-            $this->error('Please run db:create first.');
+            $this->error('Database does not exist. Run `php ml db:create` first.');
 
             return self::FAILURE;
         }
@@ -109,7 +103,7 @@ final class SchemaUpdateCommand extends Command
 
         // ── Force mode — apply with backup ───────────────────────
         if ($force) {
-            return $this->applyChanges($sql, $plan);
+            return $this->applyChanges($plan);
         }
 
         $this->info('ℹ️  Use --dump to preview SQL, --pretend for human-readable diff, or --force to apply.');
@@ -119,7 +113,7 @@ final class SchemaUpdateCommand extends Command
 
     // ── Apply changes ─────────────────────────────────────────────
 
-    private function applyChanges(string $sql, DiffPlan $plan): int
+    private function applyChanges(DiffPlan $plan): int
     {
         // Backup current schema
         $this->info('💾 Creating schema backup…');

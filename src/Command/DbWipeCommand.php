@@ -50,7 +50,7 @@ final class DbWipeCommand extends Command
             return self::SUCCESS;
         }
 
-        $this->info("Dropping {" . count($tables) . "} tables…");
+        $this->info('Dropping ' . count($tables) . ' tables…');
 
         // Disable FK checks during drop
         match ($driver) {
@@ -63,7 +63,13 @@ final class DbWipeCommand extends Command
 
         foreach ($tables as $table) {
             try {
-                $pdo->exec("DROP TABLE IF EXISTS \"{$table}\" CASCADE");
+                $dropSql = match ($driver) {
+                    'mysql'  => "DROP TABLE IF EXISTS `{$table}`",
+                    'pgsql'  => "DROP TABLE IF EXISTS \"{$table}\" CASCADE",
+                    'sqlite' => "DROP TABLE IF EXISTS \"{$table}\"",
+                    default  => "DROP TABLE IF EXISTS \"{$table}\"",
+                };
+                $pdo->exec($dropSql);
                 $dropped++;
             } catch (\PDOException $e) {
                 $this->warn("Failed to drop '{$table}': {$e->getMessage()}");
