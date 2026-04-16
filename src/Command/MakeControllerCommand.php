@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -7,52 +6,119 @@ namespace MonkeysLegion\Cli\Command;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 
-#[CommandAttr('make:controller', 'Generate a new Controller class stub')]
+/**
+ * Generate a v2 controller with #[Route] attributes.
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
+ */
+#[CommandAttr('make:controller', 'Generate a new Controller class')]
 final class MakeControllerCommand extends Command
 {
     use MakerHelpers;
 
-    public function handle(): int
+    protected function handle(): int
     {
-        $argv = $_SERVER['argv'] ?? [];
-        $input = (is_array($argv) && isset($argv[2])) ? $argv[2] : $this->ask('Enter controller name (e.g. User)');
-        $subject = is_string($input) ? $input : '';
-        $name  = preg_replace('/Controller$/', '', $subject) . 'Controller';
+        $name = $this->argument(0) ?? $this->ask('Controller name (e.g., UserController):');
 
-        if (!preg_match('/^[A-Z][A-Za-z0-9]+Controller$/', $name)) {
-            return $this->fail('Invalid name: must be CamelCase and end with "Controller".');
+        if (trim($name) === '') {
+            return $this->fail('Controller name is required.');
         }
 
-        $dir  = base_path('app/Controller');
-        $file = "{$dir}/{$name}.php";
-        @mkdir($dir, 0755, true);
+        $name     = $this->ensureSuffix($this->toPascalCase($name), 'Controller');
+        $resource = $this->hasOption('resource');
+        $api      = $this->hasOption('api');
+        $prefix   = $this->toSnakeCase($this->removeSuffix($name, 'Controller'));
 
-        if (file_exists($file)) {
-            $this->line("ℹ️  Controller already exists: {$file}");
-            return self::SUCCESS;
-        }
+        $methods = $resource || $api
+            ? $this->buildResourceMethods($api)
+            : $this->buildDefaultMethod();
 
         $stub = <<<PHP
-<?php
-declare(strict_types=1);
+            <?php
+            declare(strict_types=1);
 
-namespace App\Controller;
+            namespace App\\Controller;
 
-use MonkeysLegion\Router\Attributes\Route;
-use Psr\Http\Message\ResponseInterface;
+            use MonkeysLegion\\Router\\Attributes\\Route;
+            use MonkeysLegion\\Router\\Attributes\\RoutePrefix;
+            use Psr\\Http\\Message\\ResponseInterface;
 
-final class {$name}
-{
-    #[Route('GET', '/', summary: 'Index action')]
-    public function index(): ResponseInterface
-    {
-        // TODO: implement
+            #[RoutePrefix('/{$prefix}')]
+            final class {$name}
+            {
+            {$methods}}
+
+            PHP;
+
+        return $this->writeStub('app/Controller', $name, $stub);
     }
-}
-PHP;
 
-        file_put_contents($file, $stub);
-        $this->info("✅  Created controller: {$file}");
-        return self::SUCCESS;
+    private function buildDefaultMethod(): string
+    {
+        return <<<'PHP'
+                #[Route('GET', '/', summary: 'Index')]
+                public function index(): ResponseInterface
+                {
+                    // TODO: implement
+                }
+
+            PHP;
+    }
+
+    private function buildResourceMethods(bool $api): string
+    {
+        $methods = <<<'PHP'
+                #[Route('GET', '/', summary: 'List all')]
+                public function index(): ResponseInterface
+                {
+                    // TODO: implement
+                }
+
+                #[Route('GET', '/{id}', summary: 'Show one')]
+                public function show(int $id): ResponseInterface
+                {
+                    // TODO: implement
+                }
+
+                #[Route('POST', '/', summary: 'Create')]
+                public function store(): ResponseInterface
+                {
+                    // TODO: implement
+                }
+
+                #[Route('PUT', '/{id}', summary: 'Update')]
+                public function update(int $id): ResponseInterface
+                {
+                    // TODO: implement
+                }
+
+                #[Route('DELETE', '/{id}', summary: 'Delete')]
+                public function destroy(int $id): ResponseInterface
+                {
+                    // TODO: implement
+                }
+
+            PHP;
+
+        if (!$api) {
+            $methods .= <<<'PHP'
+
+                    #[Route('GET', '/create', summary: 'Create form')]
+                    public function create(): ResponseInterface
+                    {
+                        // TODO: implement
+                    }
+
+                    #[Route('GET', '/{id}/edit', summary: 'Edit form')]
+                    public function edit(int $id): ResponseInterface
+                    {
+                        // TODO: implement
+                    }
+
+                PHP;
+        }
+
+        return $methods;
     }
 }

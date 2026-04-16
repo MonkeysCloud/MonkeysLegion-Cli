@@ -3,41 +3,43 @@ declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
 
+use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Http\OpenApi\OpenApiGenerator;
 
 /**
- * Export the OpenAPI JSON spec.
+ * MonkeysLegion Framework — CLI Package
  *
- * Examples
- *   php vendor/bin/ml openapi:export              # prints to STDOUT
- *   php vendor/bin/ml openapi:export openapi.json # writes file
+ * Export the OpenAPI JSON specification.
+ *
+ * Usage:
+ *   php ml openapi:export              # print to STDOUT
+ *   php ml openapi:export openapi.json # write to file
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
  */
+#[CommandAttr('openapi:export', 'Dump OpenAPI spec to stdout or a file')]
 final class OpenApiExportCommand extends Command
 {
-    /** One optional argument called {path} */
-    protected string $signature   = 'openapi:export {path?}';
-    protected string $description = 'Dump OpenAPI spec to stdout or a file.';
-
-    public function __construct(private OpenApiGenerator $generator)
-    {
+    public function __construct(
+        private readonly OpenApiGenerator $generator,
+    ) {
         parent::__construct();
     }
 
-    /**
-     * @param string|null $path  If provided, spec is written to this file.
-     */
-    public function handle(?string $path = null): int
+    protected function handle(): int
     {
         $json = $this->generator->toJson();
+        $path = $this->argument(0);
 
-        if ($path) {
+        if (is_string($path) && $path !== '') {
             file_put_contents($path, $json);
-            $this->info("OpenAPI spec written to {$path}");
+            $this->info("✅ OpenAPI spec written to: {$path}");
         } else {
             $this->line($json);
         }
 
-        return 0;
+        return self::SUCCESS;
     }
 }

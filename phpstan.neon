@@ -1,4 +1,8 @@
 parameters:
-    level: max
+    level: 6
     paths:
         - src
+    scanDirectories:
+        - vendor/monkeyscloud
+    excludePaths:
+        - src/Command/MakeEntityCommand.php

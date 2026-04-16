@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -7,53 +6,70 @@ namespace MonkeysLegion\Cli\Command;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 
-#[CommandAttr('make:middleware', 'Generate a new Middleware class stub')]
+/**
+ * MonkeysLegion Framework — CLI Package
+ *
+ * Generate a PSR-15 middleware class.
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
+ */
+#[CommandAttr('make:middleware', 'Generate a PSR-15 middleware class')]
 final class MakeMiddlewareCommand extends Command
 {
     use MakerHelpers;
 
-    public function handle(): int
+    protected function handle(): int
     {
-        $argv = is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [];
-        $input = isset($argv[2]) && is_string($argv[2]) ? $argv[2] : $this->ask('Enter middleware name (e.g. Auth)');
-        $name  = preg_replace('/Middleware$/', '', $input) . 'Middleware';
+        $input = $this->argument(0) ?? $this->ask('Middleware name (e.g., Auth):');
+        $name  = $this->ensureSuffix($this->toPascalCase($input), 'Middleware');
 
         if (!preg_match('/^[A-Z][A-Za-z0-9]+Middleware$/', $name)) {
-            return $this->fail('Invalid name: must be CamelCase ending with "Middleware".');
+            $this->error('Invalid name — must be PascalCase ending with "Middleware".');
+
+            return self::FAILURE;
         }
 
-        $dir  = base_path('app/Middleware');
+        $dir  = function_exists('base_path') ? base_path('app/Middleware') : 'app/Middleware';
         $file = "{$dir}/{$name}.php";
-        @mkdir($dir, 0755, true);
 
-        if (file_exists($file)) {
-            $this->line("ℹ️  Middleware already exists: {$file}");
+        if (!is_dir($dir)) {
+            mkdir($dir, 0o755, true);
+        }
+
+        if (is_file($file)) {
+            $this->comment("Middleware already exists: {$file}");
+
             return self::SUCCESS;
         }
 
         $stub = <<<PHP
-<?php
-declare(strict_types=1);
+            <?php
+            declare(strict_types=1);
 
-namespace App\Middleware;
+            namespace App\\Middleware;
 
-use Psr\Http\Server\MiddlewareInterface;
-use Psr\Http\Message\ServerRequestInterface;
-use Psr\Http\Server\RequestHandlerInterface;
-use Psr\Http\Message\ResponseInterface;
+            use Psr\\Http\\Server\\MiddlewareInterface;
+            use Psr\\Http\\Message\\ServerRequestInterface;
+            use Psr\\Http\\Server\\RequestHandlerInterface;
+            use Psr\\Http\\Message\\ResponseInterface;
 
-final class {$name} implements MiddlewareInterface
-{
-    public function process(ServerRequestInterface \$request, RequestHandlerInterface \$handler): ResponseInterface
-    {
-        // TODO: implement middleware logic
-        return \$handler->handle(\$request);
-    }
-}
-PHP;
+            final class {$name} implements MiddlewareInterface
+            {
+                public function process(
+                    ServerRequestInterface \$request,
+                    RequestHandlerInterface \$handler,
+                ): ResponseInterface {
+                    // TODO: implement middleware logic
+
+                    return \$handler->handle(\$request);
+                }
+            }
+            PHP;
 
         file_put_contents($file, $stub);
-        $this->info("✅  Created middleware: {$file}");
+        $this->info("✅ Created middleware: {$file}");
+
         return self::SUCCESS;
     }
 }

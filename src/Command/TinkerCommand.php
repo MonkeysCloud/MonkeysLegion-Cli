@@ -1,81 +1,83 @@
 <?php
-
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
-use MonkeysLegion\DI\ContainerBuilder;
 use MonkeysLegion\DI\Container;
+use MonkeysLegion\DI\ContainerBuilder;
 
-#[CommandAttr(
-    'tinker',
-    'Interactive REPL (Tinker) with Container bootstrapped'
-)]
+/**
+ * MonkeysLegion Framework — CLI Package
+ *
+ * Interactive REPL with the DI container bootstrapped.
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
+ */
+#[CommandAttr('tinker', 'Interactive REPL with the DI Container')]
 final class TinkerCommand extends Command
 {
-    public function handle(): int
+    protected function handle(): int
     {
-        // 1) Bootstrap your DI container
+        // Bootstrap DI container
         $builder = new ContainerBuilder();
+
         /** @var array<string, mixed> $app */
         $app = require base_path('config/app.php');
         $builder->addDefinitions($app);
+
         /** @var Container $container */
         $container = $builder->build();
 
-        // Mark $container as “used” & inject it into the local scope
+        // Inject into local scope
         extract(['container' => $container]);
 
-        // 2) Welcome message
-        echo "MonkeysLegion Tinker\n";
-        echo "Type PHP expressions to evaluate. Available variable: \$container\n";
-        echo "Type exit or quit to leave.\n\n";
+        $this->cliLine()
+            ->add('MonkeysLegion Tinker', 'cyan', 'bold')
+            ->print();
+        $this->comment('Available: $container. Type "exit" to quit.');
+        $this->newLine();
 
-        // 3) REPL loop
+        // REPL loop
         while (true) {
             $prompt = 'ml> ';
+
             if (function_exists('readline')) {
                 $line = readline($prompt);
+
                 if ($line === false) {
                     echo "\n";
+
                     break;
                 }
+
                 readline_add_history($line);
             } else {
                 echo $prompt;
                 $line = fgets(STDIN);
+
                 if ($line === false) {
                     break;
                 }
             }
 
             $code = trim($line);
+
             if ($code === '' || in_array(strtolower($code), ['exit', 'quit'], true)) {
                 break;
             }
 
-            // 4) Evaluate and dump result
             try {
-                $toEval = $this->wrapExpression($code);
-                /** @noinspection PhpEval */
+                $toEval = str_ends_with(rtrim($code), ';') ? $code : "return {$code};";
                 $result = eval($toEval);
                 var_dump($result);
             } catch (\Throwable $e) {
-                echo 'Error: ' . $e->getMessage() . "\n";
+                $this->error("Error: {$e->getMessage()}");
             }
         }
 
         return self::SUCCESS;
-    }
-
-    private function wrapExpression(string $code): string
-    {
-        $trimmed = rtrim($code);
-        if (str_ends_with($trimmed, ';')) {
-            return $trimmed;
-        }
-        return 'return ' . $trimmed . ';';
     }
 }

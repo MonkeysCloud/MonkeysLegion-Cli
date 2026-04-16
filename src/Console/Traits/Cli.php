@@ -62,7 +62,7 @@ trait Cli
  * 
  * Builder for constructing multi-colored CLI output lines.
  */
-class CliLineBuilder
+final class CliLineBuilder
 {
     /**
      * ANSI color codes mapping
@@ -277,30 +277,16 @@ class CliLineBuilder
 
     /**
      * Print the colored line to output.
-     * * Handles Web/CLI environment detection automatically.
      *
      * @param bool $newline Whether to add a newline at the end
-     * @param resource|null $stream Output stream (defaults to STDOUT or php://output)
+     * @param resource $stream Output stream (STDOUT or STDERR)
      */
-    public function print(bool $newline = true, $stream = null): void
+    public function print(bool $newline = true, $stream = STDOUT): void
     {
-        // Fallback logic: If no stream provided, use STDOUT (CLI) or php://output (Web)
-        if ($stream === null) {
-            $stream = defined('STDOUT') ? STDOUT : fopen('php://output', 'w');
-        }
-
         $output = $this->build();
-
-        // If we are in a Web context (ob_start is active), we likely want to 
-        // strip ANSI codes unless we specifically want them for a terminal emulator.
-        if (!defined('STDOUT')) {
-            $output = $this->toPlainText();
-        }
-
         if ($newline) {
             $output .= PHP_EOL;
         }
-
         fwrite($stream, $output);
     }
 
@@ -311,9 +297,7 @@ class CliLineBuilder
      */
     public function printError(bool $newline = true): void
     {
-        // Fallback for STDERR
-        $stream = defined('STDERR') ? STDERR : fopen('php://output', 'w');
-        $this->print($newline, $stream);
+        $this->print($newline, STDERR);
     }
 
     /**
@@ -337,23 +321,13 @@ class CliLineBuilder
         return $this;
     }
 
-    /**
-     * Get the number of segments.
-     *
-     * @return int
-     */
-    public function count(): int
-    {
-        return count($this->segments);
+    /** Computed segment count via get hook. */
+    public int $count {
+        get => count($this->segments);
     }
 
-    /**
-     * Check if the builder is empty.
-     *
-     * @return bool
-     */
-    public function isEmpty(): bool
-    {
-        return empty($this->segments);
+    /** Computed emptiness check via get hook. */
+    public bool $isEmpty {
+        get => $this->segments === [];
     }
 }

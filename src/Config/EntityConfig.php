@@ -1,19 +1,22 @@
 <?php
+declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Config;
 
 /**
- * Maps entity configuration keys to their respective classes.
+ * MonkeysLegion Framework — CLI Package
  *
- * @return array<string, string>
+ * Aggregate config for the entity-generation wizard.
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
  */
-class EntityConfig
+final readonly class EntityConfig
 {
-
     public function __construct(
-        public readonly FieldTypeConfig $fieldTypes,
-        public readonly PhpTypeMap $phpTypeMap,
-        public readonly RelationKeywordMap $relationKeywordMap,
-        public readonly RelationInverseMap $relationInverseMap,
+        public FieldTypeConfig $fieldTypes,
+        public PhpTypeMap $phpTypeMap,
+        public RelationKeywordMap $relationKeywordMap,
+        public RelationInverseMap $relationInverseMap,
     ) {}
 }

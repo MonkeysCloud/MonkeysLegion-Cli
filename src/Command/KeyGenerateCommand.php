@@ -5,49 +5,46 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
-use RuntimeException;
 
+/**
+ * MonkeysLegion Framework — CLI Package
+ *
+ * Generate a new APP_KEY in the .env file.
+ *
+ * @copyright 2026 MonkeysCloud Team
+ * @license   MIT
+ */
 #[CommandAttr('key:generate', 'Generate a new APP_KEY in your .env file')]
 final class KeyGenerateCommand extends Command
 {
-    public function __construct()
-    {
-        parent::__construct();
-    }
-
     protected function handle(): int
     {
-        $envFile    = base_path('.env');
-        $exampleEnv = base_path('.env.example');
+        $envFile = function_exists('base_path') ? base_path('.env') : '.env';
 
-        // Ensure we have a base .env
-        if (! is_file($envFile)) {
-            if (! is_file($exampleEnv)) {
-                $this->error(".env.example not found; cannot generate .env");
-                return self::FAILURE;
-            }
-            copy($exampleEnv, $envFile);
-            $this->info("Created .env from .env.example");
+        if (!is_file($envFile)) {
+            $this->error(".env file not found at: {$envFile}");
+
+            return self::FAILURE;
         }
 
-        // Read and replace or append APP_KEY
-        $contents = file_get_contents($envFile);
-        if ($contents === false) {
-            throw new RuntimeException("Unable to read {$envFile}");
+        $key     = 'base64:' . base64_encode(random_bytes(32));
+        $content = file_get_contents($envFile);
+
+        if (!is_string($content)) {
+            $this->error('Could not read .env file.');
+
+            return self::FAILURE;
         }
 
-        // Generate a 32-byte random key, base64‑encoded
-        $key  = rtrim(base64_encode(random_bytes(32)), '=');
-        $line = "APP_KEY={$key}";
-
-        if (preg_match('/^APP_KEY=.*$/m', $contents)) {
-            $contents = preg_replace('/^APP_KEY=.*$/m', $line, $contents);
+        if (preg_match('/^APP_KEY=.*/m', $content)) {
+            $content = preg_replace('/^APP_KEY=.*/m', "APP_KEY={$key}", $content);
         } else {
-            $contents = trim($contents) . "\n\n{$line}\n";
+            $content .= "\nAPP_KEY={$key}\n";
         }
 
-        file_put_contents($envFile, $contents);
-        $this->info("Set APP_KEY in .env");
+        file_put_contents($envFile, $content);
+
+        $this->info("✅ APP_KEY updated in: {$envFile}");
 
         return self::SUCCESS;
     }
