@@ -11,10 +11,45 @@ namespace MonkeysLegion\Cli\Config;
  * @copyright 2026 MonkeysCloud Team
  * @license   MIT
  */
-final class PhpTypeMap
+final readonly class PhpTypeMap
 {
-    /** @var array<string, string>|null */
-    private ?array $map = null;
+    /** @var array<string, string> */
+    private const array MAP = [
+        'string'        => 'string',
+        'char'          => 'string',
+        'text'          => 'string',
+        'mediumText'    => 'string',
+        'longText'      => 'string',
+        'integer'       => 'int',
+        'tinyInt'       => 'int',
+        'smallInt'      => 'int',
+        'bigInt'        => 'int',
+        'unsignedBigInt' => 'int',
+        'decimal'       => 'float',
+        'float'         => 'float',
+        'boolean'       => 'bool',
+        'year'          => 'int',
+        'date'          => '\\DateTimeImmutable',
+        'time'          => '\\DateTimeImmutable',
+        'datetime'      => '\\DateTimeImmutable',
+        'datetimetz'    => '\\DateTimeImmutable',
+        'timestamp'     => '\\DateTimeImmutable',
+        'timestamptz'   => '\\DateTimeImmutable',
+        'json'          => 'array',
+        'simple_json'   => 'array',
+        'array'         => 'array',
+        'simple_array'  => 'array',
+        'set'           => 'array',
+        'uuid'          => 'string',
+        'binary'        => 'string',
+        'enum'          => 'string',
+        'geometry'      => 'string',
+        'point'         => 'string',
+        'linestring'    => 'string',
+        'polygon'       => 'string',
+        'ipAddress'     => 'string',
+        'macAddress'    => 'string',
+    ];
 
     /**
      * Complete mapping table.
@@ -23,42 +58,7 @@ final class PhpTypeMap
      */
     public function all(): array
     {
-        return $this->map ??= [
-            FieldType::STRING->value          => 'string',
-            FieldType::CHAR->value            => 'string',
-            FieldType::TEXT->value            => 'string',
-            FieldType::MEDIUM_TEXT->value     => 'string',
-            FieldType::LONG_TEXT->value       => 'string',
-            FieldType::INTEGER->value         => 'int',
-            FieldType::TINY_INT->value        => 'int',
-            FieldType::SMALL_INT->value       => 'int',
-            FieldType::BIG_INT->value         => 'int',
-            FieldType::UNSIGNED_BIG_INT->value => 'int',
-            FieldType::DECIMAL->value         => 'float',
-            FieldType::FLOAT->value           => 'float',
-            FieldType::BOOLEAN->value         => 'bool',
-            FieldType::YEAR->value            => 'int',
-            FieldType::DATE->value            => '\\DateTimeImmutable',
-            FieldType::TIME->value            => '\\DateTimeImmutable',
-            FieldType::DATETIME->value        => '\\DateTimeImmutable',
-            FieldType::DATETIMETZ->value      => '\\DateTimeImmutable',
-            FieldType::TIMESTAMP->value       => '\\DateTimeImmutable',
-            FieldType::TIMESTAMPTZ->value     => '\\DateTimeImmutable',
-            FieldType::JSON->value            => 'array',
-            FieldType::SIMPLE_JSON->value     => 'array',
-            FieldType::ARRAY->value           => 'array',
-            FieldType::SIMPLE_ARRAY->value    => 'array',
-            FieldType::SET->value             => 'array',
-            FieldType::UUID->value            => 'string',
-            FieldType::BINARY->value          => 'string',
-            FieldType::ENUM->value            => 'string',
-            FieldType::GEOMETRY->value        => 'string',
-            FieldType::POINT->value           => 'string',
-            FieldType::LINESTRING->value      => 'string',
-            FieldType::POLYGON->value         => 'string',
-            FieldType::IP_ADDRESS->value      => 'string',
-            FieldType::MAC_ADDRESS->value     => 'string',
-        ];
+        return self::MAP;
     }
 
     /**
@@ -66,6 +66,6 @@ final class PhpTypeMap
      */
     public function map(FieldType $dbType): string
     {
-        return $this->all()[$dbType->value] ?? $dbType->value;
+        return self::MAP[$dbType->value] ?? $dbType->value;
     }
 }

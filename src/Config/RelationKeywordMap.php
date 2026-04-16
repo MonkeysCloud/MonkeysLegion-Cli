@@ -11,14 +11,14 @@ namespace MonkeysLegion\Cli\Config;
  * @copyright 2026 MonkeysCloud Team
  * @license   MIT
  */
-final class RelationKeywordMap
+final readonly class RelationKeywordMap
 {
     /** @var array<string, string> */
-    private array $map = [
-        RelationKind::ONE_TO_ONE->value   => 'OneToOne',
-        RelationKind::ONE_TO_MANY->value  => 'OneToMany',
-        RelationKind::MANY_TO_ONE->value  => 'ManyToOne',
-        RelationKind::MANY_TO_MANY->value => 'ManyToMany',
+    private const array MAP = [
+        'oneToOne'   => 'OneToOne',
+        'oneToMany'  => 'OneToMany',
+        'manyToOne'  => 'ManyToOne',
+        'manyToMany' => 'ManyToMany',
     ];
 
     /**
@@ -26,12 +26,12 @@ final class RelationKeywordMap
      */
     public function all(): array
     {
-        return $this->map;
+        return self::MAP;
     }
 
     public function getAttribute(RelationKind $kind): ?string
     {
-        return $this->map[$kind->value] ?? null;
+        return self::MAP[$kind->value] ?? null;
     }
 
     public function tryFrom(string $keyword): ?RelationKind

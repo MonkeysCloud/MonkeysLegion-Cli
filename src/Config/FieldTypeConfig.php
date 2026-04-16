@@ -13,7 +13,7 @@ use InvalidArgumentException;
  * @copyright 2026 MonkeysCloud Team
  * @license   MIT
  */
-final class FieldTypeConfig
+final readonly class FieldTypeConfig
 {
     /**
      * Returns all available field types.
@@ -32,12 +32,7 @@ final class FieldTypeConfig
      */
     public function fromString(string $value): FieldType
     {
-        foreach (FieldType::cases() as $case) {
-            if ($case->value === $value) {
-                return $case;
-            }
-        }
-
-        throw new InvalidArgumentException("Unknown field type: {$value}");
+        return FieldType::tryFrom($value)
+            ?? throw new InvalidArgumentException("Unknown field type: {$value}");
     }
 }

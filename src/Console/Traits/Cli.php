@@ -62,7 +62,7 @@ trait Cli
  * 
  * Builder for constructing multi-colored CLI output lines.
  */
-class CliLineBuilder
+final class CliLineBuilder
 {
     /**
      * ANSI color codes mapping
