@@ -3,7 +3,7 @@
 
 declare(strict_types=1);
 
-use MonkeysLegion\Framework\HttpBootstrap;
+use MonkeysLegion\Framework\Application;
 
 /**
  * MonkeysLegion CLI entry point (vendor/bin/ml or skeleton/bin/ml).
@@ -28,17 +28,10 @@ if (! $found) {
     exit(1);
 }
 
-// 2) Load your DI definitions from the project config
-$configFile = ML_BASE_PATH . '/config/app.php';
-if (! file_exists($configFile)) {
-    fwrite(STDERR, "Error: missing config/app.php at {$configFile}\n");
-    exit(1);
-}
+// 2) Bootstrap the application (v2 API)
+$container = Application::create(basePath: ML_BASE_PATH)->boot();
 
-
-// 3) Bootstrap and run the CLI kernel
-$container   = HttpBootstrap::buildContainer(base_path());
-
+// 3) Run the CLI kernel
 /** @var MonkeysLegion\Cli\CliKernel $kernel */
 $kernel = $container->get(MonkeysLegion\Cli\CliKernel::class);
 exit($kernel->run($argv));
