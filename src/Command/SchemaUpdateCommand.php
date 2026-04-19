@@ -146,31 +146,48 @@ final class SchemaUpdateCommand extends Command
         $applied = 0;
         $skipped = 0;
 
-        foreach ($stmts as $stmt) {
-            $stmt = trim($stmt);
+        // Disable FK checks so column modifications don't fail
+        // when other tables reference them
+        $dialect = $this->generator->getDialect();
+        $disableFk = $dialect->disableFkChecks();
+        $enableFk  = $dialect->enableFkChecks();
 
-            if ($stmt === '') {
-                $this->progressAdvance();
-                continue;
-            }
+        if ($disableFk !== '') {
+            $pdo->exec($disableFk);
+        }
 
-            try {
-                $pdo->exec($stmt);
-                $applied++;
-            } catch (\PDOException $e) {
-                // Ignore duplicate table/column errors
-                if (in_array($e->getCode(), ['42S21', '42S01', '42P07', '42701'], true)) {
-                    $skipped++;
-                } else {
-                    $this->progressFinish();
-                    $this->error("❌ Failed: {$e->getMessage()}");
-                    $this->comment("  Statement: " . mb_substr($stmt, 0, 80) . '…');
+        try {
+            foreach ($stmts as $stmt) {
+                $stmt = trim($stmt);
 
-                    return self::FAILURE;
+                if ($stmt === '') {
+                    $this->progressAdvance();
+                    continue;
                 }
-            }
 
-            $this->progressAdvance();
+                try {
+                    $pdo->exec($stmt);
+                    $applied++;
+                } catch (\PDOException $e) {
+                    // Ignore duplicate table/column errors
+                    if (in_array($e->getCode(), ['42S21', '42S01', '42P07', '42701'], true)) {
+                        $skipped++;
+                    } else {
+                        $this->progressFinish();
+                        $this->error("❌ Failed: {$e->getMessage()}");
+                        $this->comment("  Statement: " . mb_substr($stmt, 0, 80) . '…');
+
+                        return self::FAILURE;
+                    }
+                }
+
+                $this->progressAdvance();
+            }
+        } finally {
+            // Always re-enable FK checks, even on failure
+            if ($enableFk !== '') {
+                $pdo->exec($enableFk);
+            }
         }
 
         $this->progressFinish();
