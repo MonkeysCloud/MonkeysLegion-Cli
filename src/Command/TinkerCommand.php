@@ -5,8 +5,7 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
-use MonkeysLegion\DI\Container;
-use MonkeysLegion\DI\ContainerBuilder;
+use Psr\Container\ContainerInterface;
 
 /**
  * MonkeysLegion Framework — CLI Package
@@ -19,20 +18,16 @@ use MonkeysLegion\DI\ContainerBuilder;
 #[CommandAttr('tinker', 'Interactive REPL with the DI Container')]
 final class TinkerCommand extends Command
 {
+    public function __construct(
+        private readonly ContainerInterface $container,
+    ) {
+        parent::__construct();
+    }
+
     protected function handle(): int
     {
-        // Bootstrap DI container
-        $builder = new ContainerBuilder();
-
-        /** @var array<string, mixed> $app */
-        $app = require base_path('config/app.php');
-        $builder->addDefinitions($app);
-
-        /** @var Container $container */
-        $container = $builder->build();
-
-        // Inject into local scope
-        extract(['container' => $container]);
+        // Inject container into local scope for REPL access
+        $container = $this->container;
 
         $this->cliLine()
             ->add('MonkeysLegion Tinker', 'cyan', 'bold')
@@ -49,7 +44,6 @@ final class TinkerCommand extends Command
 
                 if ($line === false) {
                     echo "\n";
-
                     break;
                 }
 

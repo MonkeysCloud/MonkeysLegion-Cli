@@ -5,11 +5,12 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
+use MonkeysLegion\Mlc\Config as MlcConfig;
 
 /**
  * MonkeysLegion Framework — CLI Package
  *
- * Create the database schema from .env credentials.
+ * Create the database schema from MLC config / .env credentials.
  *
  * @copyright 2026 MonkeysCloud Team
  * @license   MIT
@@ -17,46 +18,57 @@ use MonkeysLegion\Cli\Console\Command;
 #[CommandAttr('db:create', 'Create the database schema from .env credentials')]
 final class CreateDatabaseCommand extends Command
 {
+    public function __construct(
+        private readonly MlcConfig $config,
+    ) {
+        parent::__construct();
+    }
+
     protected function handle(): int
     {
-        /** @var array{default: string, connections: array<string, array<string, mixed>>} $cfg */
-        $cfg  = require base_path('config/database.php');
-        $conn = $cfg['connections'][$cfg['default']] ?? [];
+        $driver = $this->config->getString('database.default', 'mysql') ?? 'mysql';
 
-        $dsn     = isset($conn['dsn']) && is_string($conn['dsn']) ? $conn['dsn'] : '';
-        $appUser = isset($conn['username']) && is_string($conn['username']) ? $conn['username'] : 'root';
-        $appPass = isset($conn['password']) && is_string($conn['password']) ? $conn['password'] : '';
-
-        if (!str_starts_with($dsn, 'mysql:')) {
-            $this->comment('db:create skipped — driver is not MySQL.');
-
+        if ($driver === 'sqlite') {
+            $this->comment('db:create skipped — driver is SQLite.');
             return self::SUCCESS;
         }
 
-        // Parse host/port/dbname from DSN
-        $parts = [];
-
-        foreach (explode(';', substr($dsn, 6)) as $chunk) {
-            if ($chunk === '') {
-                continue;
-            }
-
-            [$k, $v] = array_map('trim', explode('=', $chunk, 2));
-            $parts[$k] = $v;
+        if ($driver !== 'mysql' && $driver !== 'pgsql') {
+            $this->comment("db:create skipped — unsupported driver \"{$driver}\".");
+            return self::SUCCESS;
         }
 
-        $host = $parts['host'] ?? '127.0.0.1';
-        $port = $parts['port'] ?? 3306;
-        $db   = $parts['dbname'] ?? 'app';
+        // Read connection config from MLC
+        $prefix = "database.connections.{$driver}";
+        $host   = $this->config->getString("{$prefix}.host", '127.0.0.1') ?? '127.0.0.1';
+        $port   = $this->config->getInt("{$prefix}.port", $driver === 'pgsql' ? 5432 : 3306)
+                  ?? ($driver === 'pgsql' ? 5432 : 3306);
+        $db     = $this->config->getString("{$prefix}.database", 'ml_skeleton') ?? 'ml_skeleton';
+        $user   = $this->config->getString("{$prefix}.username", 'root') ?? 'root';
+        $pass   = $this->config->getString("{$prefix}.password", '') ?? '';
 
-        $dsnTpl = 'mysql:host=%s;port=%s;charset=utf8mb4';
+        // Build DSN without database name (to create it)
+        if ($driver === 'mysql') {
+            $dsnTpl = 'mysql:host=%s;port=%d;charset=utf8mb4';
+            $createSql = sprintf(
+                'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+                $db,
+            );
+        } else {
+            // PostgreSQL
+            $dsnTpl = 'pgsql:host=%s;port=%d';
+            $createSql = sprintf(
+                "SELECT 'CREATE DATABASE \"%s\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '%s')",
+                $db, $db,
+            );
+        }
 
         // Connect
         try {
             $pdo = new \PDO(
                 sprintf($dsnTpl, $host, $port),
-                $appUser,
-                $appPass,
+                $user,
+                $pass,
                 [
                     \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
                     \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
@@ -64,42 +76,41 @@ final class CreateDatabaseCommand extends Command
             );
         } catch (\PDOException $e) {
             if (str_contains($e->getMessage(), 'getaddrinfo')) {
-                $pdo = new \PDO(
-                    sprintf($dsnTpl, '127.0.0.1', $port),
-                    $appUser,
-                    $appPass,
-                    [
-                        \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
-                        \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-                    ],
-                );
+                try {
+                    $pdo = new \PDO(
+                        sprintf($dsnTpl, '127.0.0.1', $port),
+                        $user,
+                        $pass,
+                        [
+                            \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
+                            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                        ],
+                    );
+                } catch (\PDOException $e2) {
+                    $this->error("Connection failed: {$e2->getMessage()}");
+                    return self::FAILURE;
+                }
             } else {
                 $this->error("Connection failed: {$e->getMessage()}");
-
                 return self::FAILURE;
             }
         }
 
         // Create schema
         try {
-            $pdo->exec(sprintf(
-                'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
-                $db,
-            ));
-
+            $pdo->exec($createSql);
             $this->info("✅ Schema \"{$db}\" is ready on {$host}:{$port}.");
         } catch (\PDOException $e) {
-            if (in_array($e->errorInfo[1] ?? null, [1044, 1045], true)) {
+            $code = $e->errorInfo[1] ?? null;
+            if (in_array($code, [1044, 1045], true)) {
                 $this->warn(
-                    "App user \"{$appUser}\" lacks CREATE DATABASE; " .
+                    "App user \"{$user}\" lacks CREATE DATABASE; " .
                     "ensure schema \"{$db}\" exists or grant the privilege.",
                 );
-
                 return self::SUCCESS;
             }
 
             $this->error("Failed: {$e->getMessage()}");
-
             return self::FAILURE;
         }
 
