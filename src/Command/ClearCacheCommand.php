@@ -6,7 +6,6 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
-use RuntimeException;
 use SplFileInfo;
 
 #[CommandAttr('cache:clear', 'Clear the compiled view cache (var/cache/views)')]

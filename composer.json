@@ -11,12 +11,8 @@
     "ext-readline": "*",
     "ext-pdo": "*",
     "nikic/php-parser": "^5.5",
-    "monkeyscloud/monkeyslegion-core": "^1.1",
-    "monkeyscloud/monkeyslegion-di": "^1.0",
-    "monkeyscloud/monkeyslegion-entity": "^1.0",
-    "doctrine/inflector": "^2.0",
-    "monkeyscloud/monkeyslegion-migration": "^1.0",
-    "monkeyscloud/monkeyslegion-openapi": "^1.0"
+    "monkeyscloud/monkeyslegion-core": "^2.0",
+    "monkeyscloud/monkeyslegion-di": "^2.0"
   },
   "autoload": {
     "psr-4": {
