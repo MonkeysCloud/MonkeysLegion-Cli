@@ -31,7 +31,7 @@
     "monkeyscloud/monkeyslegion-entity": "^2.0",
     "monkeyscloud/monkeyslegion-database": "^2.0",
     "monkeyscloud/monkeyslegion-migration": "^2.0",
-    "monkeyscloud/monkeyslegion-router": "^2.0"
+    "monkeyscloud/monkeyslegion-openapi": "^1.0"
   },
   "require-dev": {
     "phpunit/phpunit": "^11.0",

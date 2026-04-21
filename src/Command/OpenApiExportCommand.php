@@ -5,7 +5,7 @@ namespace MonkeysLegion\Cli\Command;
 
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
-use MonkeysLegion\Http\OpenApi\OpenApiGenerator;
+use MonkeysLegion\OpenApi\OpenApiGenerator;
 
 /**
  * MonkeysLegion Framework — CLI Package
@@ -33,7 +33,7 @@ final class OpenApiExportCommand extends Command
         $json = $this->generator->toJson();
         $path = $this->argument(0);
 
-        if (is_string($path) && $path !== '') {
+        if (\is_string($path) && $path !== '') {
             file_put_contents($path, $json);
             $this->info("✅ OpenAPI spec written to: {$path}");
         } else {

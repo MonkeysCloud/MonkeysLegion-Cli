@@ -50,6 +50,7 @@ final class CliKernel
         private readonly ContainerInterface $container,
         iterable $commands = [],
     ) {
+
         // 1. Register explicitly passed commands
         $this->registerAll($commands, 'explicit');
 
