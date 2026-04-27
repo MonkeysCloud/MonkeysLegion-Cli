@@ -6,6 +6,7 @@ namespace MonkeysLegion\Cli;
 use MonkeysLegion\Cli\Console\Attributes\Command as CommandAttr;
 use MonkeysLegion\Cli\Console\Command;
 use MonkeysLegion\Cli\Console\Traits\Cli;
+use MonkeysLegion\Cli\Support\CommandFinder;
 use Psr\Container\ContainerInterface;
 use ReflectionClass;
 use ReflectionException;
@@ -57,13 +58,16 @@ final class CliKernel
         // 2. Auto-discover vendor commands (MonkeysLegion\Cli\Command\*)
         $this->discoverVendorCommands();
 
-        // 3. Auto-discover application commands
+        // 3. Auto-discover package commands (PSR-4 Cli\Command scans)
+        $this->discoverPackageCommands();
+
+        // 4. Auto-discover application commands
         $this->discoverAppCommands();
 
-        // 4. Build grouped display
+        // 5. Build grouped display
         $this->buildGroupedCommands();
 
-        // 5. Display any loading errors
+        // 6. Display any loading errors
         if ($this->loadingErrors !== []) {
             $this->displayLoadingErrors();
         }
@@ -204,6 +208,22 @@ final class CliKernel
             $this->registerAll($vendorClasses, 'vendor');
         } catch (\Throwable $e) {
             $this->loadingErrors[] = "Error discovering vendor commands: {$e->getMessage()}";
+        }
+    }
+
+    /**
+     * Discover commands from all installed MonkeysLegion packages.
+     *
+     * Uses CommandFinder to scan all PSR-4 autoloaded namespaces for
+     * classes in Cli/Command subdirectories (e.g. monkeyslegion-sockets,
+     * monkeyslegion-devtools, etc.).
+     */
+    private function discoverPackageCommands(): void
+    {
+        try {
+            $this->registerAll(CommandFinder::all(), 'package');
+        } catch (\Throwable $e) {
+            $this->loadingErrors[] = "Error discovering package commands: {$e->getMessage()}";
         }
     }
 
