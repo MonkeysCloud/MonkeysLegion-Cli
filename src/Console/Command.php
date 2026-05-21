@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Console;
@@ -156,23 +157,61 @@ abstract class Command
 
     /**
      * Hidden input (for passwords).
-     * Falls back to readline if stty is unavailable.
+     * Works natively across Linux, macOS, and Windows.
      */
     protected function secret(string $question): string
     {
-        fwrite(STDOUT, "\033[33m{$question}\033[0m ");
+        // --- WINDOWS IMPLEMENTATION ---
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            fwrite(STDOUT, "\033[33m{$question}\033[0m ");
 
+            // Using PowerShell's native secure string input method
+            $exe = 'powershell -Command "$pword = read-host -AsSecureString; ' .
+                '[Runtime.InteropServices.Marshal]::PtrToStringAuto(' .
+                '[Runtime.InteropServices.Marshal]::SecureStringToBSTR($pword))"';
+
+            $value = shell_exec($exe);
+            fwrite(STDOUT, PHP_EOL);
+
+            return trim($value ?: '');
+        }
+
+        // --- UNIX (LINUX / MACOS) IMPLEMENTATION ---
         if ($this->supportsStty()) {
-            $sttyMode = shell_exec('stty -g') ?: '';
+            // Check if we are on macOS vs Linux to handle stty -g formatting safely
+            $isMac = str_contains(strtolower(PHP_OS), 'darwin');
+            $sttyMode = null;
+
+            if ($isMac) {
+                // macOS handles stty -g strings cleanly via standard arguments
+                $sttyMode = shell_exec('stty -g');
+            }
+
+            // Disable echo
             shell_exec('stty -echo');
+
+            // Print the prompt safely
+            fwrite(STDOUT, "\033[33m{$question}\033[0m ");
+
+            // Read the hidden user input
             $value = trim(fgets(STDIN) ?: '');
-            shell_exec('stty ' . trim($sttyMode));
+
+            // Restore terminal state based on what's supported
+            if ($isMac && $sttyMode !== null) {
+                shell_exec('stty ' . escapeshellarg(trim($sttyMode)));
+            } else {
+                // Linux fallback: Natively re-enable echo directly without string parsing
+                shell_exec('stty echo');
+            }
+
             fwrite(STDOUT, PHP_EOL);
 
             return $value;
         }
 
-        // Fallback — input is visible
+        // --- ULTIMATE FALLBACK ---
+        // If neither Windows nor working TTY controls are found, input stays visible
+        fwrite(STDOUT, "\033[33m{$question}\033[0m ");
         return trim(fgets(STDIN) ?: '');
     }
 
@@ -407,8 +446,14 @@ abstract class Command
 
     private function supportsStty(): bool
     {
-        return function_exists('shell_exec')
-            && is_string(shell_exec('stty 2>&1'))
-            && !str_contains(shell_exec('stty 2>&1') ?: '', 'not a terminal');
+        if (!function_exists('shell_exec')) {
+            return false;
+        }
+
+        // Test if stty is present and interacting with a valid TTY stream
+        // without printing, reading, or caching configuration buffers.
+        exec('stty 2>/dev/null', $output, $exitCode);
+
+        return $exitCode === 0;
     }
 }
