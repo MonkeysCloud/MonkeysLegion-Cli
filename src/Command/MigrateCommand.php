@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace MonkeysLegion\Cli\Command;
@@ -38,7 +39,7 @@ final class MigrateCommand extends Command
         $runner = new MigrationRunner($this->db, new BatchTracker($this->db));
         $result = $runner->run($dir, $steps);
 
-        if ($result->executed === []) {
+        if ($result->executed === [] && $result->failed === [] && $result->error === null) {
             $this->info('Nothing to migrate.');
 
             return self::SUCCESS;
