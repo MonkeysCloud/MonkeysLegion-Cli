@@ -72,6 +72,14 @@ final class SchemaUpdateCommand extends Command
 
         $plan = $this->generator->computeDiff($entities);
 
+        // ── Skip tables ──────────────────────────────────────────
+        // --skip-table=usage_events or --skip-table=usage_events,jobs
+        $skipTables = $this->collectSkipTables();
+        if ($skipTables !== []) {
+            $plan->removeTables($skipTables);
+            $this->comment('  Skipping tables: ' . implode(', ', $skipTables));
+        }
+
         if ($plan->isEmpty()) {
             $this->info('✔️  Schema is already up to date.');
 
@@ -156,6 +164,15 @@ final class SchemaUpdateCommand extends Command
             $pdo->exec($disableFk);
         }
 
+        // Error codes that can be safely skipped:
+        // 42S21 = Column already exists (MySQL)
+        // 42S01 = Table already exists (MySQL)
+        // 42P07 = Duplicate table (PostgreSQL)
+        // 42701 = Duplicate column (PostgreSQL)
+        // 42P16 = Invalid table definition (PostgreSQL partition key — cannot alter)
+        // 42710 = Duplicate object (PostgreSQL — constraint already exists)
+        $skippableErrors = ['42S21', '42S01', '42P07', '42701', '42P16', '42710'];
+
         try {
             foreach ($stmts as $stmt) {
                 $stmt = trim($stmt);
@@ -169,8 +186,7 @@ final class SchemaUpdateCommand extends Command
                     $pdo->exec($stmt);
                     $applied++;
                 } catch (\PDOException $e) {
-                    // Ignore duplicate table/column errors
-                    if (in_array($e->getCode(), ['42S21', '42S01', '42P07', '42701'], true)) {
+                    if (in_array($e->getCode(), $skippableErrors, true)) {
                         $skipped++;
                     } else {
                         $this->progressFinish();
@@ -198,7 +214,7 @@ final class SchemaUpdateCommand extends Command
             ['Metric', 'Count'],
             [
                 ['Applied statements', (string) $applied],
-                ['Skipped (already exist)', (string) $skipped],
+                ['Skipped (already exist / partition)', (string) $skipped],
                 ['Total changes', (string) $plan->changeCount()],
             ],
         );
@@ -209,6 +225,56 @@ final class SchemaUpdateCommand extends Command
     }
 
     // ── Helpers ───────────────────────────────────────────────────
+
+    /**
+     * Collect table names to skip from --skip-table option(s).
+     *
+     * Supports:
+     *   --skip-table=usage_events
+     *   --skip-table=usage_events,jobs
+     *   --skip-table usage_events --skip-table jobs
+     *
+     * @return list<string>
+     */
+    private function collectSkipTables(): array
+    {
+        global $argv;
+
+        if (!is_array($argv)) {
+            return [];
+        }
+
+        $tables = [];
+
+        for ($i = 0, $c = count($argv); $i < $c; $i++) {
+            $arg = $argv[$i];
+
+            // --skip-table=value
+            if (str_starts_with($arg, '--skip-table=')) {
+                $val = substr($arg, strlen('--skip-table='));
+                foreach (explode(',', $val) as $t) {
+                    $t = trim($t);
+                    if ($t !== '') {
+                        $tables[] = $t;
+                    }
+                }
+                continue;
+            }
+
+            // --skip-table value
+            if ($arg === '--skip-table' && isset($argv[$i + 1]) && !str_starts_with($argv[$i + 1], '-')) {
+                $val = $argv[++$i];
+                foreach (explode(',', $val) as $t) {
+                    $t = trim($t);
+                    if ($t !== '') {
+                        $tables[] = $t;
+                    }
+                }
+            }
+        }
+
+        return array_unique($tables);
+    }
 
     private function checkDatabaseExists(): bool
     {
