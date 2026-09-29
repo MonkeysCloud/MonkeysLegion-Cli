@@ -189,7 +189,7 @@ export default defineConfig({
         },
     },
     build: {
-        outDir: 'public/assets/build',
+        outDir: 'public/build',
         manifest: 'manifest.json',
         rollupOptions: {
             input: 'resources/js/{$entryFile}',
