@@ -22,7 +22,10 @@ final class OptimizeCommand extends Command
 
         $tasks = [
             'Caching config'  => fn() => $this->runSub('config:cache'),
+            'Caching routes'  => fn() => $this->runSub('route:cache'),
             'Clearing cache'  => fn() => $this->runSub('cache:clear'),
+            'Compiling container' => fn() => $this->runSub('container:compile'),
+            'Generating preload'  => fn() => $this->runSub('preload:generate'),
             'Clearing stale'  => fn() => $this->clearStaleCache(),
         ];
 
@@ -51,7 +54,10 @@ final class OptimizeCommand extends Command
     {
         match ($signature) {
             'config:cache' => (new ConfigCacheCommand())->__invoke(),
+            'route:cache'  => (new RouteCacheCommand())->__invoke(),
             'cache:clear'  => (new ClearCacheCommand())->__invoke(),
+            'container:compile' => (new ContainerCompileCommand())->__invoke(),
+            'preload:generate'  => (new PreloadGenerateCommand())->__invoke(),
             default        => throw new \RuntimeException("Sub-command '{$signature}' not implemented."),
         };
     }
